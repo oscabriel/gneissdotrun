@@ -1,0 +1,3 @@
+{
+  "extends": "@gneissdotrun/config/tsconfig.base.json"
+}
