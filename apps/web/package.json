@@ -5,7 +5,8 @@
 	"scripts": {
 		"build": "vite build",
 		"serve": "vite preview",
-		"dev:bare": "vite dev"
+		"dev:bare": "vite dev",
+		"typecheck": "tsc -b"
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.0.0",

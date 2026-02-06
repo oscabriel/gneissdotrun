@@ -9,7 +9,6 @@
 			"default": "./src/*.ts"
 		}
 	},
-	"scripts": {},
 	"dependencies": {
 		"@gneissdotrun/db": "workspace:*",
 		"@gneissdotrun/env": "workspace:*",

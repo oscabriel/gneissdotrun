@@ -29,7 +29,7 @@
 	"scripts": {
 		"dev": "turbo dev",
 		"build": "turbo build",
-		"check-types": "turbo check-types",
+		"typecheck": "turbo typecheck",
 		"dev:native": "turbo -F native dev",
 		"dev:web": "turbo -F web dev",
 		"dev:server": "turbo -F server dev",
