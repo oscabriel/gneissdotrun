@@ -1,29 +1,29 @@
 {
-  "name": "@gneissdotrun/db",
-  "type": "module",
-  "exports": {
-    ".": {
-      "default": "./src/index.ts"
-    },
-    "./*": {
-      "default": "./src/*.ts"
-    }
-  },
-  "scripts": {
-    "db:push": "drizzle-kit push",
-    "db:generate": "drizzle-kit generate"
-  },
-  "dependencies": {
-    "@gneissdotrun/env": "workspace:*",
-    "@libsql/client": "catalog:",
-    "dotenv": "catalog:",
-    "drizzle-orm": "catalog:",
-    "libsql": "catalog:",
-    "zod": "catalog:"
-  },
-  "devDependencies": {
-    "@gneissdotrun/config": "workspace:*",
-    "drizzle-kit": "^0.31.8",
-    "typescript": "catalog:"
-  }
+	"name": "@gneissdotrun/db",
+	"type": "module",
+	"exports": {
+		".": {
+			"default": "./src/index.ts"
+		},
+		"./*": {
+			"default": "./src/*.ts"
+		}
+	},
+	"scripts": {
+		"db:push": "drizzle-kit push",
+		"db:generate": "drizzle-kit generate"
+	},
+	"dependencies": {
+		"@gneissdotrun/env": "workspace:*",
+		"@libsql/client": "catalog:",
+		"dotenv": "catalog:",
+		"drizzle-orm": "catalog:",
+		"libsql": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@gneissdotrun/config": "workspace:*",
+		"drizzle-kit": "^0.31.8",
+		"typescript": "catalog:"
+	}
 }

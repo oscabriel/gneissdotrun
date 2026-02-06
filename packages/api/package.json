@@ -1,30 +1,30 @@
 {
-  "name": "@gneissdotrun/api",
-  "type": "module",
-  "exports": {
-    ".": {
-      "default": "./src/index.ts"
-    },
-    "./*": {
-      "default": "./src/*.ts"
-    }
-  },
-  "scripts": {},
-  "dependencies": {
-    "@gneissdotrun/auth": "workspace:*",
-    "@gneissdotrun/db": "workspace:*",
-    "@gneissdotrun/env": "workspace:*",
-    "@orpc/client": "catalog:",
-    "@orpc/openapi": "catalog:",
-    "@orpc/server": "catalog:",
-    "@orpc/zod": "catalog:",
-    "dotenv": "catalog:",
-    "drizzle-orm": "catalog:",
-    "zod": "catalog:"
-  },
-  "devDependencies": {
-    "@gneissdotrun/config": "workspace:*",
-    "hono": "catalog:",
-    "typescript": "catalog:"
-  }
+	"name": "@gneissdotrun/api",
+	"type": "module",
+	"exports": {
+		".": {
+			"default": "./src/index.ts"
+		},
+		"./*": {
+			"default": "./src/*.ts"
+		}
+	},
+	"scripts": {},
+	"dependencies": {
+		"@gneissdotrun/auth": "workspace:*",
+		"@gneissdotrun/db": "workspace:*",
+		"@gneissdotrun/env": "workspace:*",
+		"@orpc/client": "catalog:",
+		"@orpc/openapi": "catalog:",
+		"@orpc/server": "catalog:",
+		"@orpc/zod": "catalog:",
+		"dotenv": "catalog:",
+		"drizzle-orm": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@gneissdotrun/config": "workspace:*",
+		"hono": "catalog:",
+		"typescript": "catalog:"
+	}
 }

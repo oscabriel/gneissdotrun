@@ -1,24 +1,24 @@
 {
-  "name": "@gneissdotrun/auth",
-  "type": "module",
-  "exports": {
-    ".": {
-      "default": "./src/index.ts"
-    },
-    "./*": {
-      "default": "./src/*.ts"
-    }
-  },
-  "scripts": {},
-  "dependencies": {
-    "@gneissdotrun/db": "workspace:*",
-    "@gneissdotrun/env": "workspace:*",
-    "better-auth": "catalog:",
-    "dotenv": "catalog:",
-    "zod": "catalog:"
-  },
-  "devDependencies": {
-    "@gneissdotrun/config": "workspace:*",
-    "typescript": "catalog:"
-  }
+	"name": "@gneissdotrun/auth",
+	"type": "module",
+	"exports": {
+		".": {
+			"default": "./src/index.ts"
+		},
+		"./*": {
+			"default": "./src/*.ts"
+		}
+	},
+	"scripts": {},
+	"dependencies": {
+		"@gneissdotrun/db": "workspace:*",
+		"@gneissdotrun/env": "workspace:*",
+		"better-auth": "catalog:",
+		"dotenv": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@gneissdotrun/config": "workspace:*",
+		"typescript": "catalog:"
+	}
 }
