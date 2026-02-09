@@ -8,3 +8,5 @@
 # Learnings
 
 Whenever you learn something new that feels contradictory or that you didn't expect, add it to the list below for future reference.
+
+- In `cloudflare/agents`, `routeAgentRequest()` may not handle plain HTTP requests to `/agents/*` unless they are WebSocket upgrades (tests indicate non-upgrade requests fall through). Plan server routing accordingly.
