@@ -37,10 +37,12 @@
 - **Auditability** of agent decisions, with user overrides
 - **Interoperability** with external agents/bots (OpenClaw optional) and exports
 - **Unified platform** — frontend, backend, agents, storage all on Cloudflare
+- **Markdown-first notes** with minimal versioning requirements for v1
 
 ### Non-Goals (initial scope)
 
 - Full collaborative editing or shared workspaces
+- Organization/team accounts (per-user only in v1)
 - Real-time multi-user cursors
 - Replacement of calendar/task systems
 - Enterprise admin controls (SSO, SCIM, org policy)
@@ -264,10 +266,12 @@ interface Env {
 	VECTORIZE: VectorizeIndex;
 	FILES: R2Bucket;
 	KV: KVNamespace;
+	CORS_ORIGIN: string;
 
 	// Secrets
 	GOOGLE_AI_KEY: string;
 	BETTER_AUTH_SECRET: string;
+	BETTER_AUTH_URL: string;
 }
 ```
 
@@ -281,8 +285,8 @@ interface Env {
 IndexAgent          (1 per user)   — reactive cross-note index
 RouterAgent         (1 per user)   — input classification + routing
 RewriteAgent        (1 per note)   — note content, conversation, streaming
-OrganizationAgent   (1 per user)   — background clustering, linking, extraction
-SurfacingAgent      (1 per user)   — query synthesis, digests
+OrganizationAgent   (1 per user)   — background clustering, linking, extraction (v1 minimal)
+SurfacingAgent      (1 per user)   — query synthesis, digests (v1 minimal)
 ```
 
 ### Ephemeral Thread Model
@@ -378,7 +382,7 @@ export class RouterAgent extends Agent<Env> {
 		const noteIndex = await this.getNoteIndex();
 
 		const decision = await generateObject({
-			model: google("gemini-2.5-flash"),
+			model: google("gemini-3-flash-preview"),
 			schema: routingSchema,
 			prompt: `Classify this input and decide routing.
         Input: "${input}"
@@ -428,7 +432,7 @@ export class RewriteAgent extends AIChatAgent<Env> {
 			stream: createUIMessageStream({
 				execute: async ({ writer }) => {
 					const result = streamText({
-						model: google("gemini-2.5-flash"),
+						model: google("gemini-3-flash-preview"),
 						system: `You are the Gneiss Rewrite Agent.
               Current note content:\n${currentNote?.content || ""}
               Routing decision: ${this.routingContext}
@@ -502,7 +506,7 @@ export class OrganizationAgent extends Agent<Env> {
 
 ### LLM Provider
 
-- **Primary:** Google Gemini 2.5 Flash (fast, cost-effective)
+- **Primary:** Google Gemini 3 Flash Preview (fast, cost-effective)
 - **Fallback:** Configurable per-agent
 - **SDK:** Vercel AI SDK (`ai` package) for `streamText`, `generateObject`, `generateText`
 
@@ -545,8 +549,8 @@ D1 tables: entities, facts, note_links, collections. Each agent has a **context 
 - OrganizationAgent: full entity graph + active facts for clustering
 - SurfacingAgent: pending action items, recent collections, contradictions
 
-**Tier 4 — Semantic Retrieval (on-demand, expensive)**
-Vectorize embeddings. Only used when structured tiers can't answer the need — e.g., RewriteAgent handling `/research`, SurfacingAgent answering freeform queries. Top-K similarity search. Most expensive tier, opt-in per task.
+**Tier 4 — Semantic Retrieval (optional)**
+Vectorize embeddings, only if we decide semantic retrieval is required. Not part of v1 by default.
 
 ```
 Per-interaction context assembly:
@@ -560,7 +564,7 @@ Per-interaction context assembly:
 
 **Key insight:** Tier 1 and the knowledge graph (Tier 3) are _byproducts_ of the OrganizationAgent's heartbeat. The heartbeat doesn't just cluster notes — it maintains the shared context infrastructure all other agents consume. OrganizationAgent is the producer; every other agent is a consumer.
 
-**Pros:** Full control, no external dependency, uses infrastructure we already have (D1, Vectorize, DO RPC). Maps directly to our existing data model.
+**Pros:** Full control, no external dependency, uses infrastructure we already have (D1, DO RPC). Maps directly to our existing data model.
 **Cons:** Significant custom engineering. No temporal reasoning, knowledge versioning, or conflict resolution in the context layer itself (those exist in our data model but aren't surfaced as "memories"). Reinventing patterns that memory libraries have already solved.
 
 ### Approach B: Integrate a Memory Layer (Supermemory, Mem0, or Similar)
@@ -619,7 +623,7 @@ Key patterns from ADK:
 - D1 + DO SQLite = the "sources" (sessions, knowledge graph, note content)
 - A per-agent `assembleContext()` function = the "compiler pipeline"
 - The system prompt + context payload = the "compiled view"
-- Vectorize = the "memory search" backend
+- Vectorize = the "memory search" backend (optional)
 - R2 artifacts = the "handle pattern" for large data
 
 This is essentially a more disciplined version of Approach A, with explicit concepts borrowed from ADK's architecture.
@@ -630,7 +634,7 @@ This is essentially a more disciplined version of Approach A, with explicit conc
 
 Rationale:
 
-1. We already have all the infrastructure for Approach A (D1, Vectorize, DO RPC, IndexAgent). The missing piece is the `assembleContext()` function per agent and the user profile synthesis.
+1. We already have all the infrastructure for Approach A (D1, DO RPC, IndexAgent). The missing piece is the `assembleContext()` function per agent and the user profile synthesis.
 2. ADK's patterns (scope by default, explicit processors, context compaction) are architectural principles we can adopt without adopting ADK itself.
 3. Supermemory's relational versioning and temporal grounding are genuinely novel and directly relevant to our entities/facts model. If our Tier 3 (structured D1 queries) proves too simplistic — e.g., we need temporal reasoning across fact changes, or conflict detection at the memory layer — Supermemory is the strongest external option.
 4. An external memory service on a critical path (every agent interaction) introduces latency and vendor risk that we should defer until we've proven we need it.
@@ -718,16 +722,27 @@ Pi rebuilds the system prompt from resources each time: tools + skills + project
 
 ## Core Data Model
 
+### Naming Conventions
+
+- Tables use lowercase snake_case. Domain tables are plural (`notes`, `entities`, `facts`, `collections`, `collection_notes`, `note_links`, `action_items`, `user_preferences`, `openclaw_tokens`, `audit_logs`). Auth tables keep the existing singular names (`user`, `session`, `account`, `verification`).
+- Exported Drizzle table constants mirror the table name (`export const notes = sqliteTable("notes", ...)`).
+- Column names are lowercase snake_case; TypeScript property names are camelCase (`userId` → `user_id`).
+- Primary keys are `id`. Use `text` IDs for globally-addressable records (notes, entities, facts) and integer auto-increment for local-only tables (e.g., DO-local `note_versions`).
+- Foreign keys use `<table>_id` with snake_case and reference the target table's `id`.
+- Timestamps use `created_at`, `updated_at`, optional `deleted_at` and store `timestamp_ms` integers with `unixepoch` defaults and `$onUpdate` for `updated_at`.
+- Booleans use `integer` with `{ mode: "boolean" }` and defaults (`false` unless otherwise specified).
+- Index names use `<table>_<field>_idx`, matching the TypeScript field name used in the schema (example: `session_userId_idx`).
+
 ### Data Model Split
 
 **Inside each RewriteAgent DO (co-located per-note state):**
 
 - Current note content + title + metadata (local SQLite)
 - Full conversation history (auto-managed by AIChatAgent in `cf_ai_chat_agent_messages`)
-- Note version snapshots for revert (local SQLite `note_versions` table)
+- Note version snapshots for revert (optional, post-v1)
 - Stream chunks for resumable streaming (auto-managed)
 
-**In D1 (shared relational, cross-note queryable):**
+**In D1 (shared relational, cross-note queryable, per-user scoped):**
 
 | Table              | Purpose                                                      |
 | ------------------ | ------------------------------------------------------------ |
@@ -742,7 +757,7 @@ Pi rebuilds the system prompt from resources each time: tools + skills + project
 | `openclaw_tokens`  | External integration auth tokens                             |
 | `audit_logs`       | Agent actions for transparency                               |
 
-**In Vectorize:** note embeddings, entity embeddings (for semantic search + clustering)
+**In Vectorize (optional):** note embeddings, entity embeddings (only if semantic search/clustering needs it)
 
 **In R2:** audio files, images, PDFs, screenshots
 
@@ -772,7 +787,7 @@ RewriteAgent finishes rewrite:
 
 ### Inputs
 
-- **Blank-page note** (primary): User writes in the new note view, hits "Go." Agent consumes the content and rewrites/replaces it with organized output. User can watch in real time or leave and come back to the result.
+- **Blank-page note** (primary): User writes in the new note view, hits "Go." Agent consumes the content and rewrites/replaces it with organized output. User can watch in real time or leave and come back to the result. Notes are stored as Markdown.
 - **Slash command within note**: User types `/ask`, `/research`, `/link`, `/summarize`, or freeform `/` on a new line within an existing note. The command is consumed — it disappears, and the agent folds new content into the existing note, restructuring as needed.
 - **OpenClaw text** (optional): short messages and commands → stored as notes → agent rewrites
 - **OpenClaw voice** (optional): audio link + transcript → stored as notes → agent rewrites
@@ -802,7 +817,7 @@ RewriteAgent finishes rewrite:
 
 Managed automatically by AIChatAgent. Each RewriteAgent DO stores messages in its local SQLite (`cf_ai_chat_agent_messages` table). The `useAgentChat({ resume: true })` hook on the client auto-loads history and resumes interrupted streams.
 
-For version revert, we maintain a custom `note_versions` table in the DO:
+For version revert (post-v1), we maintain a custom `note_versions` table in the DO:
 
 ```sql
 CREATE TABLE note_versions (
@@ -835,9 +850,9 @@ Note: the agent does **not** replay the full message history as LLM context (see
 
 ### Clustering Strategy (Initial)
 
-- Embedding similarity via Vectorize as primary signal
-- Entity overlap as secondary signal
-- Recency as a weak prior for grouping
+- Entity overlap + keyword similarity as primary signals (no embeddings required).
+- Recency as a weak prior for grouping.
+- Add embeddings if clustering quality requires semantic similarity.
 
 ### Contradiction Detection
 
@@ -1076,13 +1091,13 @@ Each agent can expose tools via MCP using the `McpAgent` base class. External to
 
 ### Indices
 
-- **Vectorize:** note embeddings and entity embeddings for semantic search
 - **D1 indexes:** text search on `notes.title`, `notes.summary`, `entities.name`
+- **Vectorize (optional):** note/entity embeddings if we decide semantic retrieval is required.
 
 ### Retrieval Strategy
 
-- Hybrid retrieval with score blending (vector + text + recency)
-- Rerank by entity overlap + action-item presence
+- Start with text + structured retrieval (D1 + knowledge graph).
+- Add embeddings only if search quality or clustering requires it.
 
 ---
 
@@ -1166,7 +1181,7 @@ Each agent can expose tools via MCP using the `McpAgent` base class. External to
 
 1. **Offline sync strategy** — How to handle capture queue conflicts?
 2. **Notification delivery** — Push via PWA vs. OpenClaw hooks?
-3. **Embedding model** — Vectorize built-in vs. external (OpenAI, Voyage)?
+3. **Embedding model** — defer until we decide embeddings are required.
 4. **Rate limiting** — Per-user LLM cost caps? Slash commands are LLM-heavy; need per-note and per-user throttling.
 5. **Outbound delivery** — How to handle OpenClaw gateways not reachable from Gneiss?
 6. **Rewrite strategy** — Full document replacement vs. structured diff? Full replacement is simpler but means streaming the entire note on every interaction. Structured diff is more efficient but harder to implement with Tiptap. May need a hybrid.
@@ -1177,7 +1192,7 @@ Each agent can expose tools via MCP using the `McpAgent` base class. External to
 11. **Ephemeral answer lifecycle** — How long does the temporary answer stay before blank page resets? Auto-dismiss after N seconds? Dismiss on user interaction?
 12. **Fan-out consistency** — Solved by AgentWorkflow: each note update is its own durable step with retry. Partial failures resume from last successful step.
 13. **Duplicate detection threshold** — Embedding similarity threshold? Entity overlap? Risk of false positives vs. false negatives.
-14. **Vectorize maturity** — Production-ready for our dimensions/query patterns? Evaluate Turbopuffer as alternative.
+14. **Vectorize maturity** — defer until we decide embeddings are required.
 15. **D1 row limits** — 10GB per database. Fine for single-user; at scale, may need per-user D1 databases.
 16. **DO cold start latency** — ~50-100ms for hibernated DOs. Test with full agent initialization.
 17. **better-auth D1 adapter** — Verify adapter exists and works. Fallback: custom JWT or Cloudflare Access.

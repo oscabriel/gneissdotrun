@@ -10,18 +10,18 @@ export interface RouterAppContext {
 }
 
 export const Route = createRootRouteWithContext<RouterAppContext>()({
-		head: () => ({
-			meta: [
-				{
-					charSet: "utf-8",
+	head: () => ({
+		meta: [
+			{
+				charSet: "utf-8",
 			},
 			{
 				name: "viewport",
 				content: "width=device-width, initial-scale=1",
 			},
-				{
-					title: "GNEISS.RUN",
-				},
+			{
+				title: "GNEISS.RUN",
+			},
 		],
 		links: [
 			{

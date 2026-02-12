@@ -8,6 +8,8 @@
 		"compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server"
 	},
 	"dependencies": {
+		"@ai-sdk/google": "^3.0.26",
+		"@cloudflare/ai-chat": "^0.0.7",
 		"@gneissdotrun/api": "workspace:*",
 		"@gneissdotrun/auth": "workspace:*",
 		"@gneissdotrun/db": "workspace:*",
@@ -15,9 +17,12 @@
 		"@orpc/openapi": "catalog:",
 		"@orpc/server": "catalog:",
 		"@orpc/zod": "catalog:",
+		"agents": "^0.4.0",
+		"ai": "^6.0.81",
 		"better-auth": "catalog:",
 		"dotenv": "catalog:",
 		"hono": "catalog:",
+		"hono-agents": "^3.0.3",
 		"zod": "catalog:"
 	},
 	"devDependencies": {
