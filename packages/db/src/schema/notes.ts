@@ -13,12 +13,14 @@ export const notes = sqliteTable(
 		title: text("title").notNull().default("Untitled note"),
 		content: text("content").notNull().default(""),
 		summary: text("summary").notNull().default(""),
+		contentHash: text("content_hash"),
 		tags: text("tags", { mode: "json" })
 			.$type<string[]>()
 			.notNull()
 			.default(sql`(json_array())`),
 		sourceMessageId: text("source_message_id"),
 		dedupeKey: text("dedupe_key"),
+		processedAt: integer("processed_at", { mode: "timestamp_ms" }),
 		createdAt: integer("created_at", { mode: "timestamp_ms" })
 			.default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
 			.notNull(),

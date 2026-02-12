@@ -23,7 +23,7 @@
 - [x] Bind R2 for uploads in `packages/infra/alchemy.run.ts`.
 - [x] Bind Vectorize for embeddings in `packages/infra/alchemy.run.ts` only if semantic retrieval is required.
 - [x] Add workflow bindings for `AgentWorkflow` classes in `packages/infra/alchemy.run.ts`.
-- [x] Add explicit `dev` port (`3001`) for `apps/web` in `packages/infra/alchemy.run.ts`.
+- [x] Add explicit `dev` port (`3001`) for `apps/web` in `apps/web/vite.config.ts` (not infra bindings).
 - [x] Verify `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are present in infra bindings and loaded before auth initialization.
 - [x] Verify `packages/env/env.d.ts` typing still resolves from Alchemy bindings after infra changes.
 - [x] Keep worker entrypoint as `apps/server/src/index.ts` (no change; validate during infra edits).
@@ -58,16 +58,16 @@
 
 ## Phase 3: Note-as-Result + Organization Layer
 
-- [ ] Implement slash command parsing in `apps/web/src/components/editor/NoteEditor.tsx`.
-- [ ] Persist slash commands in agent conversation history, not the editor surface.
-- [ ] Handle optimistic concurrency + conflict resolution between editor state and `RewriteAgent` updates.
-- [ ] Build `OrganizationAgent` in `apps/server/src/agents/organization-agent.ts`.
-- [ ] Build `OrganizeWorkflow` in `apps/server/src/agents/workflows/organize-workflow.ts`.
-- [ ] Build `ContradictionWorkflow` in `apps/server/src/agents/workflows/contradiction-workflow.ts`.
-- [ ] Implement Vectorize adapter in `apps/server/src/agents/vectorize.ts` only if embeddings are required.
-- [ ] Add extraction/fact/collection schemas in `packages/db/src/schema` and re-export via `packages/db/src/schema/index.ts`.
-- [ ] Generate new D1 migrations via Drizzle tooling.
-- [ ] Implement dual-write persistence + IndexAgent notifications in `apps/server/src/agents/shared/persistence.ts`.
+- [x] Implement slash command parsing in `apps/web/src/components/editor/NoteEditor.tsx`.
+- [x] Persist slash commands in agent conversation history, not the editor surface.
+- [x] Handle optimistic concurrency + conflict resolution between editor state and `RewriteAgent` updates.
+- [x] Build `OrganizationAgent` in `apps/server/src/agents/organization-agent.ts`.
+- [x] Build `OrganizeWorkflow` in `apps/server/src/agents/workflows/organize-workflow.ts`.
+- [x] Build `ContradictionWorkflow` in `apps/server/src/agents/workflows/contradiction-workflow.ts`.
+- [x] Implement Vectorize adapter in `apps/server/src/agents/vectorize.ts` only if embeddings are required.
+- [x] Add extraction/fact/collection schemas in `packages/db/src/schema` and re-export via `packages/db/src/schema/index.ts`.
+- [x] Generate new D1 migrations via Drizzle tooling.
+- [x] Implement dual-write persistence + IndexAgent notifications in `apps/server/src/agents/shared/persistence.ts`.
 
 ---
 

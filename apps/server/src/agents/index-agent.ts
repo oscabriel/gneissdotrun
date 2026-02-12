@@ -1,22 +1,36 @@
 import { Agent } from "agents";
 
-import type { AgentEnv, IndexedNote, IndexAgentState } from "./shared";
+import type {
+	ActionItemStub,
+	AgentEnv,
+	CollectionStub,
+	ContradictionStub,
+	IndexedNote,
+	IndexAgentState,
+} from "./shared";
 
 interface IndexActionPayload {
-	action: "upsert" | "remove" | "clear";
+	action: "upsert" | "remove" | "clear" | "collections" | "action_items" | "contradictions";
 	note?: IndexedNote;
 	noteId?: string;
+	collections?: CollectionStub[];
+	actionItems?: ActionItemStub[];
+	contradictions?: ContradictionStub[];
 }
 
 export class IndexAgent extends Agent<AgentEnv, IndexAgentState> {
 	initialState: IndexAgentState = {
 		notes: [],
+		collections: [],
+		actionItems: [],
+		contradictions: [],
 		updatedAt: Date.now(),
 	};
 
 	private writeState(notes: IndexedNote[]): void {
 		const sorted = [...notes].sort((a, b) => b.updatedAt - a.updatedAt);
 		this.setState({
+			...this.state,
 			notes: sorted,
 			updatedAt: Date.now(),
 		});
@@ -37,6 +51,30 @@ export class IndexAgent extends Agent<AgentEnv, IndexAgentState> {
 		this.writeState([]);
 	}
 
+	private updateCollections(collections: CollectionStub[]): void {
+		this.setState({
+			...this.state,
+			collections: [...collections],
+			updatedAt: Date.now(),
+		});
+	}
+
+	private updateActionItems(items: ActionItemStub[]): void {
+		this.setState({
+			...this.state,
+			actionItems: [...items],
+			updatedAt: Date.now(),
+		});
+	}
+
+	private updateContradictions(items: ContradictionStub[]): void {
+		this.setState({
+			...this.state,
+			contradictions: [...items],
+			updatedAt: Date.now(),
+		});
+	}
+
 	private async handleMutation(payload: IndexActionPayload): Promise<Response> {
 		if (payload.action === "upsert" && payload.note) {
 			this.upsert(payload.note);
@@ -50,6 +88,21 @@ export class IndexAgent extends Agent<AgentEnv, IndexAgentState> {
 
 		if (payload.action === "clear") {
 			this.clear();
+			return Response.json({ ok: true, state: this.state });
+		}
+
+		if (payload.action === "collections" && payload.collections) {
+			this.updateCollections(payload.collections);
+			return Response.json({ ok: true, state: this.state });
+		}
+
+		if (payload.action === "action_items" && payload.actionItems) {
+			this.updateActionItems(payload.actionItems);
+			return Response.json({ ok: true, state: this.state });
+		}
+
+		if (payload.action === "contradictions" && payload.contradictions) {
+			this.updateContradictions(payload.contradictions);
 			return Response.json({ ok: true, state: this.state });
 		}
 

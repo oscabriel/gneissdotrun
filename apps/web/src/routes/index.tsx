@@ -10,7 +10,11 @@ import { UploadPanel } from "@/components/uploads/UploadPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authClient } from "@/lib/auth-client";
-import type { RewriteRoutingContext } from "@/lib/agents/hooks";
+import {
+	useIndexAgent,
+	type IndexAgentState,
+	type RewriteRoutingContext,
+} from "@/lib/agents/hooks";
 
 export const Route = createFileRoute("/")({
 	component: HomeComponent,
@@ -40,6 +44,7 @@ function HomeComponent() {
 	const [activeNote, setActiveNote] = useState<CreatedNote | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [isCreating, setIsCreating] = useState(false);
+	const [routerDecision, setRouterDecision] = useState<RewriteRoutingContext | null>(null);
 
 	const createNote = async () => {
 		setError(null);
@@ -66,6 +71,39 @@ function HomeComponent() {
 
 			const payload = (await response.json()) as { note: CreatedNote };
 			setActiveNote(payload.note);
+
+			if (draft.trim().length > 0) {
+				const routeResponse = await fetch(`${env.VITE_SERVER_URL}/api/notes/route`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+					},
+					credentials: "include",
+					body: JSON.stringify({
+						noteId: payload.note.id,
+						userInput: draft,
+					}),
+				});
+
+				if (!routeResponse.ok) {
+					const routePayload = (await routeResponse.json()) as { error?: string };
+					throw new Error(routePayload.error ?? "Failed to route note input");
+				}
+
+				const routePayload = (await routeResponse.json()) as {
+					decision: RewriteRoutingContext;
+				};
+
+				setRouterDecision(routePayload.decision);
+				setActiveNote((previous) =>
+					previous
+						? {
+								...previous,
+								tags: routePayload.decision.tags ?? [],
+							}
+						: previous,
+				);
+			}
 		} catch (createError) {
 			setError(createError instanceof Error ? createError.message : "Failed to create note");
 		} finally {
@@ -102,6 +140,13 @@ function HomeComponent() {
 
 	return (
 		<div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-4 py-6">
+			{session?.user.id ? (
+				<IndexAgentSubscriber
+					userId={session.user.id}
+					activeNote={activeNote}
+					onSelectNote={setActiveNote}
+				/>
+			) : null}
 			<header className="border-border flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
 				<div>
 					<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">
@@ -133,8 +178,9 @@ function HomeComponent() {
 					<NoteEditor
 						noteId={activeNote.id}
 						userId={session.user.id}
+						title={activeNote.title}
 						initialContent={activeNote.content}
-						routingContext={DEFAULT_ROUTING_CONTEXT}
+						routingContext={routerDecision ?? DEFAULT_ROUTING_CONTEXT}
 					/>
 					<UploadPanel noteId={activeNote.id} />
 				</div>
@@ -168,4 +214,34 @@ function HomeComponent() {
 			)}
 		</div>
 	);
+}
+
+function IndexAgentSubscriber({
+	userId,
+	activeNote,
+	onSelectNote,
+}: {
+	userId: string;
+	activeNote: CreatedNote | null;
+	onSelectNote: (note: CreatedNote) => void;
+}) {
+	useIndexAgent({
+		userId,
+		onStateUpdate: (state: IndexAgentState) => {
+			if (activeNote || !state.notes.length) {
+				return;
+			}
+
+			const latest = state.notes[0];
+			onSelectNote({
+				id: latest.id,
+				title: latest.title,
+				content: "",
+				tags: [],
+				updatedAt: latest.updatedAt,
+			});
+		},
+	});
+
+	return null;
 }

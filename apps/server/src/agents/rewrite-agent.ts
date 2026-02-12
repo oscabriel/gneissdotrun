@@ -1,12 +1,14 @@
 import { AIChatAgent } from "@cloudflare/ai-chat";
-import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
+import { createUIMessageStream, createUIMessageStreamResponse, streamText } from "ai";
+import { google } from "@ai-sdk/google";
 
 import {
-	applyLocalRewrite,
 	buildRewritePrompt,
 	createId,
 	getLatestUserInput,
+	persistNoteAndNotify,
 	splitIntoChunks,
+	notifyIndexAgent,
 } from "./shared";
 import type { AgentEnv, RewriteAgentState, RoutingDecision } from "./shared";
 
@@ -22,6 +24,7 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 	initialState: RewriteAgentState = {
 		noteId: "",
 		userId: "",
+		title: "",
 		noteContent: "",
 		routingContext: DEFAULT_ROUTING,
 		updatedAt: Date.now(),
@@ -30,39 +33,48 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 	async onChatMessage() {
 		const latestUserInput = getLatestUserInput(this.messages);
 		const routing = this.state.routingContext ?? DEFAULT_ROUTING;
+		const routingPayload = {
+			kind: routing.kind,
+			reason: routing.reason,
+		};
+		const noteContent = this.state.noteContent.trim().length
+			? this.state.noteContent
+			: "(empty note)";
 
 		const prompt = buildRewritePrompt({
-			noteContent: this.state.noteContent,
+			noteContent,
 			userInput: latestUserInput,
 			routing,
 		});
 
-		const rewrittenNote = applyLocalRewrite({
-			noteContent: this.state.noteContent,
-			userInput: latestUserInput,
-			routing,
-		});
-
-		this.setState({
-			...this.state,
-			noteContent: rewrittenNote,
-			updatedAt: Date.now(),
+		const result = streamText({
+			model: google("gemini-2.0-flash"),
+			prompt,
 		});
 
 		const stream = createUIMessageStream({
-			execute: ({ writer }) => {
+			execute: async ({ writer }) => {
 				const id = createId("rewrite");
 				writer.write({
 					type: "text-start",
 					id,
 				});
 
-				for (const chunk of splitIntoChunks(rewrittenNote)) {
-					writer.write({
-						type: "text-delta",
-						id,
-						delta: chunk,
-					});
+				let buffer = "";
+				for await (const delta of result.textStream) {
+					buffer += delta;
+					for (const chunk of splitIntoChunks(delta)) {
+						writer.write({
+							type: "text-delta",
+							id,
+							delta: chunk,
+						});
+					}
+				}
+
+				const trimmed = buffer.trim();
+				if (trimmed.length > 0) {
+					await this.persistRewrite(trimmed, routing, routingPayload);
 				}
 
 				writer.write({
@@ -82,5 +94,39 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 		});
 
 		return createUIMessageStreamResponse({ stream });
+	}
+
+	private async persistRewrite(
+		noteContent: string,
+		routing: RoutingDecision,
+		routingPayload: { kind: string; reason: string },
+	): Promise<void> {
+		const now = Date.now();
+		this.setState({
+			...this.state,
+			noteContent,
+			routingContext: routing,
+			updatedAt: now,
+		});
+
+		if (!this.state.noteId || !this.state.userId) {
+			return;
+		}
+
+		const summary = noteContent.slice(0, 240);
+
+		const indexStub = await persistNoteAndNotify(this.env, {
+			noteId: this.state.noteId,
+			userId: this.state.userId,
+			title: this.state.title,
+			content: noteContent,
+			summary,
+			tags: routing.tags ?? [],
+			routingContext: routingPayload,
+			processedAt: now,
+			updatedAt: now,
+		});
+
+		await notifyIndexAgent(this.env, this.state.userId, indexStub);
 	}
 }

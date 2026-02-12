@@ -15,7 +15,7 @@ import { validator } from "hono/validator";
 import { agentsMiddleware } from "hono-agents";
 import z from "zod";
 
-import type { IndexAgent } from "./agents";
+import type { IndexAgent, OrganizationAgent, RouterAgent, SurfacingAgent } from "./agents";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -31,6 +31,45 @@ const createNoteValidator = validator("json", (value, c) => {
 		return c.json(
 			{
 				error: "Invalid note payload",
+				issues: parsed.error.flatten(),
+			},
+			400,
+		);
+	}
+
+	return parsed.data;
+});
+
+const routeNotePayloadSchema = z.object({
+	noteId: z.string().uuid(),
+	userInput: z.string().trim().min(1).max(50_000),
+});
+
+const routeNoteValidator = validator("json", (value, c) => {
+	const parsed = routeNotePayloadSchema.safeParse(value);
+	if (!parsed.success) {
+		return c.json(
+			{
+				error: "Invalid routing payload",
+				issues: parsed.error.flatten(),
+			},
+			400,
+		);
+	}
+
+	return parsed.data;
+});
+
+const surfacingQueryPayloadSchema = z.object({
+	question: z.string().trim().min(1).max(5_000),
+});
+
+const surfacingQueryValidator = validator("json", (value, c) => {
+	const parsed = surfacingQueryPayloadSchema.safeParse(value);
+	if (!parsed.success) {
+		return c.json(
+			{
+				error: "Invalid surfacing query payload",
 				issues: parsed.error.flatten(),
 			},
 			400,
@@ -183,8 +222,26 @@ app.post("/api/notes", createNoteValidator, async (c) => {
 				},
 			}),
 		});
+
+		const organizationAgent = await getAgentByName<Env, OrganizationAgent>(
+			c.env.ORGANIZATION_AGENT,
+			user.id,
+		);
+		await organizationAgent.fetch("https://organization-agent/internal", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				noteId,
+				routing: {
+					kind: "new_note",
+					reason: "New note created from capture flow.",
+				},
+			}),
+		});
 	} catch (error) {
-		console.error("Failed to notify index agent", error);
+		console.error("Failed to notify agents", error);
 	}
 
 	return c.json({
@@ -196,6 +253,142 @@ app.post("/api/notes", createNoteValidator, async (c) => {
 			updatedAt: now,
 		},
 	});
+});
+
+app.post("/api/notes/route", routeNoteValidator, async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const input = c.req.valid("json");
+	const note = await c.env.DB.prepare(
+		"SELECT id, content, title, summary, updated_at FROM notes WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL",
+	)
+		.bind(input.noteId, user.id)
+		.first<{
+			id: string;
+			content: string;
+			title: string;
+			summary: string;
+			updated_at: number;
+		}>();
+
+	if (!note) {
+		return c.json({ error: "Note not found" }, 404);
+	}
+
+	const routerAgent = await getAgentByName<Env, RouterAgent>(c.env.ROUTER_AGENT, user.id);
+	const response = await routerAgent.fetch("https://router-agent/internal", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			noteId: input.noteId,
+			noteContent: note.content,
+			userInput: input.userInput,
+		}),
+	});
+
+	if (!response.ok) {
+		return c.json({ error: "RouterAgent failed" }, 502);
+	}
+
+	const payload = (await response.json()) as {
+		decision: {
+			kind: string;
+			confidence: number;
+			reason: string;
+			tags: string[];
+			target: "rewrite-agent" | "organization-agent" | "none";
+		};
+	};
+
+	return c.json({
+		decision: payload.decision,
+	});
+});
+
+app.post("/api/surfacing/query", surfacingQueryValidator, async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const input = c.req.valid("json");
+	const surfacingAgent = await getAgentByName<Env, SurfacingAgent>(c.env.SURFACING_AGENT, user.id);
+	const response = await surfacingAgent.fetch("https://surfacing-agent/internal", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			action: "query",
+			question: input.question,
+		}),
+	});
+
+	if (!response.ok) {
+		return c.json({ error: "SurfacingAgent query failed" }, 502);
+	}
+
+	const payload = (await response.json()) as {
+		answer: string;
+		citations: Array<{ id: string; title: string }>;
+		relatedCollections: Array<{ id: string; title: string; summary: string }>;
+		followUps: string[];
+	};
+
+	return c.json(payload);
+});
+
+app.get("/api/surfacing/digest", async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const surfacingAgent = await getAgentByName<Env, SurfacingAgent>(c.env.SURFACING_AGENT, user.id);
+	const response = await surfacingAgent.fetch("https://surfacing-agent/internal", {
+		method: "GET",
+	});
+
+	if (!response.ok) {
+		return c.json({ error: "SurfacingAgent state fetch failed" }, 502);
+	}
+
+	const payload = (await response.json()) as {
+		latestDigest: unknown;
+		updatedAt: number;
+	};
+
+	return c.json({
+		digest: payload.latestDigest ?? null,
+		updatedAt: payload.updatedAt,
+	});
+});
+
+app.post("/api/surfacing/digest", async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const surfacingAgent = await getAgentByName<Env, SurfacingAgent>(c.env.SURFACING_AGENT, user.id);
+	const response = await surfacingAgent.fetch("https://surfacing-agent/internal", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({ action: "digest" }),
+	});
+
+	if (!response.ok) {
+		return c.json({ error: "SurfacingAgent digest generation failed" }, 502);
+	}
+
+	return c.json(await response.json());
 });
 
 app.post("/api/uploads", uploadFormValidator, async (c) => {
@@ -306,6 +499,14 @@ app.get("/", (c) => {
 	return c.text("OK");
 });
 
-export { IndexAgent, RewriteAgent, RouterAgent } from "./agents";
+export {
+	ContradictionWorkflow,
+	IndexAgent,
+	OrganizationAgent,
+	OrganizeWorkflow,
+	RewriteAgent,
+	RouterAgent,
+	SurfacingAgent,
+} from "./agents";
 
 export default app;

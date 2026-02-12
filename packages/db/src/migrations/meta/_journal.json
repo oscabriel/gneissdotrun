@@ -15,6 +15,13 @@
       "when": 1770874540861,
       "tag": "0001_modern_silverclaw",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1770926449426,
+      "tag": "0002_wide_jack_flag",
+      "breakpoints": true
     }
   ]
 }

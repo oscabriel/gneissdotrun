@@ -36,6 +36,16 @@ const routerAgent = DurableObjectNamespace("router-agent", {
 	sqlite: true,
 });
 
+const organizationAgent = DurableObjectNamespace("organization-agent", {
+	className: "OrganizationAgent",
+	sqlite: true,
+});
+
+const surfacingAgent = DurableObjectNamespace("surfacing-agent", {
+	className: "SurfacingAgent",
+	sqlite: true,
+});
+
 const organizeWorkflow = Workflow("organize-workflow", {
 	workflowName: "organize-workflow",
 	className: "OrganizeWorkflow",
@@ -88,6 +98,8 @@ export const server = await Worker("server", {
 		REWRITE_AGENT: rewriteAgent,
 		INDEX_AGENT: indexAgent,
 		ROUTER_AGENT: routerAgent,
+		ORGANIZATION_AGENT: organizationAgent,
+		SURFACING_AGENT: surfacingAgent,
 		ORGANIZE_WORKFLOW: organizeWorkflow,
 		FANOUT_WORKFLOW: fanoutWorkflow,
 		CONTRADICTION_WORKFLOW: contradictionWorkflow,

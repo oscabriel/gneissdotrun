@@ -1,4 +1,7 @@
 import { Agent } from "agents";
+import { google } from "@ai-sdk/google";
+import { generateObject } from "ai";
+import z from "zod";
 
 import { RouterIndexCache } from "./router-index";
 import type { AgentEnv, RouteKind, RouterAgentState, RoutingDecision } from "./shared";
@@ -10,6 +13,64 @@ interface RouteRequest {
 }
 
 const MAX_DECISIONS = 50;
+const ROUTER_MODEL = "gemini-flash-3-preview";
+
+const llmRoutingDecisionSchema = z.object({
+	kind: z.enum([
+		"new_note",
+		"update_existing",
+		"correction",
+		"split",
+		"fan_out",
+		"workspace_action",
+		"ephemeral_answer",
+		"store_preference",
+		"duplicate",
+	]),
+	confidence: z.number().min(0).max(1),
+	reason: z.string().min(1).max(320),
+	tags: z.array(z.string().trim().min(1).max(40)).max(8).default([]),
+	target: z.enum(["rewrite-agent", "organization-agent", "none"]),
+});
+
+interface LightweightNoteIndex {
+	id: string;
+	title: string;
+	summary: string;
+	tags: string[];
+	updatedAt: number;
+}
+
+function targetForKind(kind: RouteKind): RoutingDecision["target"] {
+	if (kind === "fan_out") {
+		return "organization-agent";
+	}
+
+	if (kind === "workspace_action" || kind === "ephemeral_answer" || kind === "store_preference") {
+		return "none";
+	}
+
+	return "rewrite-agent";
+}
+
+function normalizeDecision(decision: z.infer<typeof llmRoutingDecisionSchema>): RoutingDecision {
+	const kind = decision.kind as RouteKind;
+	const target = targetForKind(kind);
+	const confidence = Number.isFinite(decision.confidence)
+		? Math.min(1, Math.max(0, decision.confidence))
+		: 0.5;
+	const tags = Array.from(
+		new Set((decision.tags ?? []).map((tag) => tag.trim().toLowerCase())),
+	).filter((tag) => tag.length > 0);
+
+	return {
+		kind,
+		confidence,
+		reason: decision.reason,
+		tags,
+		target,
+	};
+}
 
 export class RouterAgent extends Agent<AgentEnv, RouterAgentState> {
 	initialState: RouterAgentState = {
@@ -17,12 +78,107 @@ export class RouterAgent extends Agent<AgentEnv, RouterAgentState> {
 		updatedAt: Date.now(),
 	};
 
+	private parseTags(raw: string): string[] {
+		try {
+			const parsed = JSON.parse(raw) as unknown;
+			if (!Array.isArray(parsed)) {
+				return [];
+			}
+
+			return parsed
+				.filter((value): value is string => typeof value === "string")
+				.map((value) => value.trim())
+				.filter((value) => value.length > 0)
+				.slice(0, 12);
+		} catch {
+			return [];
+		}
+	}
+
 	private cache(): RouterIndexCache {
 		return new RouterIndexCache(this.env.KV);
 	}
 
-	private classifyWithHeuristics(input: string): RoutingDecision {
+	private async loadLightweightIndex(currentNoteId: string): Promise<LightweightNoteIndex[]> {
+		const rows = await this.env.DB.prepare(
+			"SELECT id, title, summary, tags, updated_at FROM notes WHERE user_id = ?1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 40",
+		)
+			.bind(this.name)
+			.all<{
+				id: string;
+				title: string;
+				summary: string;
+				tags: string;
+				updated_at: number;
+			}>();
+
+		const mapped = (rows.results ?? []).map((row) => ({
+			id: row.id,
+			title: row.title,
+			summary: row.summary,
+			tags: this.parseTags(row.tags),
+			updatedAt: row.updated_at,
+		}));
+
+		const current = mapped.find((row) => row.id === currentNoteId);
+		const others = mapped.filter((row) => row.id !== currentNoteId);
+
+		return current ? [current, ...others] : others;
+	}
+
+	private buildRoutingPrompt(request: RouteRequest, noteIndex: LightweightNoteIndex[]): string {
+		const currentNote = noteIndex.find((note) => note.id === request.noteId) ?? null;
+		const compactIndex = noteIndex.map((note) => ({
+			id: note.id,
+			title: note.title,
+			summary: note.summary,
+			tags: note.tags,
+			updatedAt: note.updatedAt,
+		}));
+
+		const noteExcerpt = request.noteContent.slice(0, 4000);
+
+		return [
+			"You are RouterAgent for Gneiss.",
+			"Classify the latest user input into one routing kind.",
+			"Return confidence 0..1, short reason, and compact tags.",
+			"Choose kind based on intent:",
+			"- new_note: capture should become a distinct note.",
+			"- update_existing: mutate current note as normal rewrite.",
+			"- correction: explicit fix/correct request.",
+			"- split: user requests splitting into multiple notes.",
+			"- fan_out: request implies multiple outputs/background organization.",
+			"- workspace_action: non-note command/action.",
+			"- ephemeral_answer: direct Q/A without note mutation.",
+			"- store_preference: user preference to remember.",
+			"- duplicate: input matches existing knowledge and should avoid duplicate storage.",
+			"Only use provided data. Be conservative with high confidence.",
+			`Current note id: ${request.noteId}`,
+			`Current note metadata: ${JSON.stringify(currentNote)}`,
+			`Current note excerpt: ${noteExcerpt || "(empty note)"}`,
+			`Latest user input: ${request.userInput}`,
+			`Recent note index: ${JSON.stringify(compactIndex)}`,
+		].join("\n\n");
+	}
+
+	private async classifyWithLlm(
+		request: RouteRequest,
+		noteIndex: LightweightNoteIndex[],
+	): Promise<RoutingDecision> {
+		const prompt = this.buildRoutingPrompt(request, noteIndex);
+		const { object } = await generateObject({
+			model: google(ROUTER_MODEL),
+			schema: llmRoutingDecisionSchema,
+			prompt,
+			temperature: 0.1,
+		});
+
+		return normalizeDecision(object);
+	}
+
+	private classifyWithHeuristics(input: string, noteContent: string): RoutingDecision {
 		const normalized = input.trim().toLowerCase();
+		const hasExistingContent = noteContent.trim().length > 0;
 
 		const matrix: Array<{
 			kind: RouteKind;
@@ -77,7 +233,8 @@ export class RouterAgent extends Agent<AgentEnv, RouterAgentState> {
 				target: "rewrite-agent",
 				confidence: 0.86,
 				tags: ["edit", "correction"],
-				match: (value) => value.startsWith("fix") || value.startsWith("correct"),
+				match: (value) =>
+					hasExistingContent && (value.startsWith("fix") || value.startsWith("correct")),
 				reason: "Input appears to be a correction.",
 			},
 			{
@@ -85,7 +242,7 @@ export class RouterAgent extends Agent<AgentEnv, RouterAgentState> {
 				target: "rewrite-agent",
 				confidence: 0.76,
 				tags: ["update", "rewrite"],
-				match: (value) => value.length > 0,
+				match: (value) => hasExistingContent && value.length > 0,
 				reason: "Default route for active note updates.",
 			},
 		];
@@ -124,14 +281,23 @@ export class RouterAgent extends Agent<AgentEnv, RouterAgentState> {
 	}
 
 	private async route(request: RouteRequest): Promise<RoutingDecision> {
-		const fingerprint = `${request.noteId}:${request.userInput.trim().toLowerCase()}`;
+		const contentFingerprint = request.noteContent.trim().slice(0, 512).toLowerCase();
+		const fingerprint = `${request.noteId}:${request.userInput.trim().toLowerCase()}:${contentFingerprint}`;
 		const cached = await this.cache().get(fingerprint);
 		if (cached) {
 			this.rememberDecision(request.noteId, cached);
 			return cached;
 		}
 
-		const decision = this.classifyWithHeuristics(request.userInput);
+		let decision: RoutingDecision;
+		try {
+			const noteIndex = await this.loadLightweightIndex(request.noteId);
+			decision = await this.classifyWithLlm(request, noteIndex);
+		} catch (error) {
+			console.error("RouterAgent LLM classification failed, using heuristics", error);
+			decision = this.classifyWithHeuristics(request.userInput, request.noteContent);
+		}
+
 		await this.cache().put(fingerprint, decision);
 		this.rememberDecision(request.noteId, decision);
 
