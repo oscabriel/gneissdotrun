@@ -3,9 +3,10 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "alchemy dev",
-		"deploy": "alchemy deploy",
-		"destroy": "alchemy destroy"
+		"dev": "alchemy dev --stage dev",
+		"deploy": "alchemy deploy --stage prod",
+		"destroy": "alchemy destroy --stage dev",
+		"destroy:prod": "alchemy destroy --stage prod"
 	},
 	"dependencies": {
 		"dotenv": "catalog:",

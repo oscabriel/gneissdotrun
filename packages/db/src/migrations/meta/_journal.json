@@ -8,6 +8,13 @@
       "when": 1770415833120,
       "tag": "0000_smooth_paibok",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1770874540861,
+      "tag": "0001_modern_silverclaw",
+      "breakpoints": true
     }
   ]
 }

@@ -33,26 +33,26 @@
 
 ## Phase 2: Capture Layer (Server + Web Integration)
 
-- [ ] Create `apps/server/src/agents/` module structure and export barrel in `apps/server/src/agents/index.ts`.
-- [ ] Define agent env typings in `apps/server/src/agents/shared/agent-env.ts`.
-- [ ] Build `RewriteAgent` in `apps/server/src/agents/rewrite-agent.ts` using `AIChatAgent`.
-- [ ] Implement per-interaction prompt assembly in `RewriteAgent` (note content + routing context, not full `this.messages`).
-- [ ] Add `IndexAgent` in `apps/server/src/agents/index-agent.ts` for note index and broadcast.
-- [ ] Add `RouterAgent` in `apps/server/src/agents/router-agent.ts` for routing LLM + dispatch.
-- [ ] Add shared agent utilities in `apps/server/src/agents/shared/`.
-- [ ] Add KV-backed router index cache in `apps/server/src/agents/router-index.ts`.
-- [ ] Register `agentsMiddleware()` for `/agents/*` before RPC/OpenAPI in `apps/server/src/index.ts`.
-- [ ] Add HTTP fallback with `routeAgentRequest()` for non-WebSocket `/agents/*` requests if needed.
-- [ ] Add validation middleware for Hono routes using `validator()` + `c.req.valid()`.
-- [ ] Create note schema tables in `packages/db/src/schema` and update `packages/db/src/schema/index.ts` exports.
-- [ ] Generate D1 migrations via Drizzle tooling and add to `packages/db/src/migrations`.
-- [ ] Add blank-note capture UI in `apps/web/src/routes`.
-- [ ] Add `apps/web/src/lib/agents/client.ts` for agent client configuration.
-- [ ] Add `apps/web/src/lib/agents/hooks.ts` to wrap `useAgent` + `useAgentChat`.
-- [ ] Implement note morphing stream UI in `apps/web/src/components/editor/NoteEditor.tsx`.
-- [ ] Build command palette UI in `apps/web/src/components/command-palette/CommandPalette.tsx`.
-- [ ] Implement upload route(s) in `apps/server/src/index.ts` to store files in R2 and metadata in D1.
-- [ ] Add upload UI in `apps/web/src/components` and wire to server upload route(s).
+- [x] Create `apps/server/src/agents/` module structure and export barrel in `apps/server/src/agents/index.ts`.
+- [x] Define agent env typings in `apps/server/src/agents/shared/agent-env.ts`.
+- [x] Build `RewriteAgent` in `apps/server/src/agents/rewrite-agent.ts` using `AIChatAgent`.
+- [x] Implement per-interaction prompt assembly in `RewriteAgent` (note content + routing context, not full `this.messages`).
+- [x] Add `IndexAgent` in `apps/server/src/agents/index-agent.ts` for note index and broadcast.
+- [x] Add `RouterAgent` in `apps/server/src/agents/router-agent.ts` for routing LLM + dispatch.
+- [x] Add shared agent utilities in `apps/server/src/agents/shared/`.
+- [x] Add KV-backed router index cache in `apps/server/src/agents/router-index.ts`.
+- [x] Register `agentsMiddleware()` for `/agents/*` before RPC/OpenAPI in `apps/server/src/index.ts`.
+- [x] Add HTTP fallback with `routeAgentRequest()` for non-WebSocket `/agents/*` requests if needed.
+- [x] Add validation middleware for Hono routes using `validator()` + `c.req.valid()`.
+- [x] Create note schema tables in `packages/db/src/schema` and update `packages/db/src/schema/index.ts` exports.
+- [x] Generate D1 migrations via Drizzle tooling and add to `packages/db/src/migrations`.
+- [x] Add blank-note capture UI in `apps/web/src/routes`.
+- [x] Add `apps/web/src/lib/agents/client.ts` for agent client configuration.
+- [x] Add `apps/web/src/lib/agents/hooks.ts` to wrap `useAgent` + `useAgentChat`.
+- [x] Implement note morphing stream UI in `apps/web/src/components/editor/NoteEditor.tsx`.
+- [x] Build command palette UI in `apps/web/src/components/command-palette/CommandPalette.tsx`.
+- [x] Implement upload route(s) in `apps/server/src/index.ts` to store files in R2 and metadata in D1.
+- [x] Add upload UI in `apps/web/src/components` and wire to server upload route(s).
 
 ---
 
