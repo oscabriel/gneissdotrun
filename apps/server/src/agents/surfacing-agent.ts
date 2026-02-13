@@ -56,12 +56,17 @@ interface FactRow {
 	source_note_id: string | null;
 }
 
-const SURFACING_MODEL = "gemini-flash-3-preview";
+const SURFACING_MODEL = "gemini-2.5-flash";
+const SURFACING_MODEL_FALLBACK = "gemini-2.0-flash";
+const collectionIdSchema = z
+	.string()
+	.trim()
+	.regex(/^collection_[0-9a-fA-F-]{36}$/);
 
 const querySynthesisSchema = z.object({
 	answer: z.string().trim().min(1).max(3200),
 	citationNoteIds: z.array(z.string().trim().uuid()).max(10).default([]),
-	relatedCollectionIds: z.array(z.string().trim().uuid()).max(10).default([]),
+	relatedCollectionIds: z.array(collectionIdSchema).max(10).default([]),
 	followUps: z.array(z.string().trim().min(1).max(160)).max(3).default([]),
 });
 
@@ -94,6 +99,35 @@ function trim(value: string, maxLength = 2400): string {
 	return value.length <= maxLength ? value : `${value.slice(0, maxLength)}...`;
 }
 
+async function generateStructuredWithFallback(input: {
+	schema: z.ZodTypeAny;
+	prompt: string;
+	temperature: number;
+	task: string;
+}): Promise<unknown> {
+	try {
+		const { object } = await generateObject({
+			model: google(SURFACING_MODEL),
+			schema: input.schema,
+			prompt: input.prompt,
+			temperature: input.temperature,
+		});
+
+		return object as unknown;
+	} catch (primaryError) {
+		console.error(`SurfacingAgent ${input.task} failed on primary model`, primaryError);
+
+		const { object } = await generateObject({
+			model: google(SURFACING_MODEL_FALLBACK),
+			schema: input.schema,
+			prompt: input.prompt,
+			temperature: input.temperature,
+		});
+
+		return object as unknown;
+	}
+}
+
 export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 	initialState: SurfacingAgentState = {
 		latestDigest: null,
@@ -102,6 +136,21 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 
 	async onStart() {
 		this.schedule("0 8 * * 1", "generateWeeklyDigest");
+	}
+
+	private emptyDigest(rangeStart: number, rangeEnd: number): SurfacingDigest {
+		return {
+			title: "Weekly digest",
+			overview: "Digest generation encountered an error; returning baseline summary.",
+			highlights: [],
+			risks: [],
+			nextActions: [],
+			generatedAt: rangeEnd,
+			rangeStart,
+			rangeEnd,
+			noteCount: 0,
+			pendingActionCount: 0,
+		};
 	}
 
 	private async collectNoteIds(question: string): Promise<string[]> {
@@ -234,12 +283,26 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 			};
 		}
 
-		const noteIds = await this.collectNoteIds(trimmedQuestion);
-		const [notes, collections, facts] = await Promise.all([
-			this.loadNotes(noteIds),
-			this.loadCollections(noteIds),
-			this.loadFacts(noteIds),
-		]);
+		let noteIds: string[] = [];
+		let notes: Array<NoteRow & { tagsList: string[] }> = [];
+		let collections: CollectionRow[] = [];
+		let facts: FactRow[] = [];
+		try {
+			noteIds = await this.collectNoteIds(trimmedQuestion);
+			[notes, collections, facts] = await Promise.all([
+				this.loadNotes(noteIds),
+				this.loadCollections(noteIds),
+				this.loadFacts(noteIds),
+			]);
+		} catch (error) {
+			console.error("SurfacingAgent query retrieval failed", error);
+			return {
+				answer: "I could not load workspace context right now. Please retry in a moment.",
+				citations: [],
+				relatedCollections: [],
+				followUps: [],
+			};
+		}
 
 		const prompt = [
 			"You are SurfacingAgent for Gneiss.",
@@ -261,13 +324,12 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 
 		let synthesis: z.infer<typeof querySynthesisSchema>;
 		try {
-			const { object } = await generateObject({
-				model: google(SURFACING_MODEL),
+			synthesis = (await generateStructuredWithFallback({
 				schema: querySynthesisSchema,
 				prompt,
 				temperature: 0.15,
-			});
-			synthesis = object;
+				task: "query synthesis",
+			})) as z.infer<typeof querySynthesisSchema>;
 		} catch (error) {
 			console.error("SurfacingAgent query synthesis failed", error);
 			const firstNote = notes[0];
@@ -312,19 +374,32 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 		const rangeEnd = Date.now();
 		const rangeStart = rangeEnd - 7 * 24 * 60 * 60 * 1000;
 
-		const [recentNotes, pendingActions, recentCollections] = await Promise.all([
-			this.env.DB.prepare(
-				"SELECT id, title, summary, tags, updated_at FROM notes WHERE user_id = ?1 AND deleted_at IS NULL AND updated_at >= ?2 ORDER BY updated_at DESC LIMIT 40",
-			)
-				.bind(this.name, rangeStart)
-				.all<NoteRow>(),
-			this.loadPendingActions(40),
-			this.env.DB.prepare(
-				"SELECT id, title, summary, updated_at FROM collections WHERE user_id = ?1 AND deleted_at IS NULL AND updated_at >= ?2 ORDER BY updated_at DESC LIMIT 20",
-			)
-				.bind(this.name, rangeStart)
-				.all<CollectionRow>(),
-		]);
+		let recentNotes: D1Result<NoteRow>;
+		let pendingActions: ActionItemRow[];
+		let recentCollections: D1Result<CollectionRow>;
+		try {
+			[recentNotes, pendingActions, recentCollections] = await Promise.all([
+				this.env.DB.prepare(
+					"SELECT id, title, summary, tags, updated_at FROM notes WHERE user_id = ?1 AND deleted_at IS NULL AND updated_at >= ?2 ORDER BY updated_at DESC LIMIT 40",
+				)
+					.bind(this.name, rangeStart)
+					.all<NoteRow>(),
+				this.loadPendingActions(40),
+				this.env.DB.prepare(
+					"SELECT id, title, summary, updated_at FROM collections WHERE user_id = ?1 AND deleted_at IS NULL AND updated_at >= ?2 ORDER BY updated_at DESC LIMIT 20",
+				)
+					.bind(this.name, rangeStart)
+					.all<CollectionRow>(),
+			]);
+		} catch (error) {
+			console.error("SurfacingAgent digest retrieval failed", error);
+			const digest = this.emptyDigest(rangeStart, rangeEnd);
+			this.setState({
+				latestDigest: digest,
+				updatedAt: Date.now(),
+			});
+			return digest;
+		}
 
 		const prompt = [
 			"Generate a concise weekly digest for a knowledge workspace.",
@@ -343,13 +418,12 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 
 		let digestParts: z.infer<typeof digestSchema>;
 		try {
-			const { object } = await generateObject({
-				model: google(SURFACING_MODEL),
+			digestParts = (await generateStructuredWithFallback({
 				schema: digestSchema,
 				prompt,
 				temperature: 0.2,
-			});
-			digestParts = object;
+				task: "digest synthesis",
+			})) as z.infer<typeof digestSchema>;
 		} catch (error) {
 			console.error("SurfacingAgent digest generation failed", error);
 			digestParts = {
@@ -397,13 +471,31 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 				return Response.json({ error: "question is required" }, { status: 400 });
 			}
 
-			const result = await this.query(payload.question);
-			return Response.json(result);
+			try {
+				const result = await this.query(payload.question);
+				return Response.json(result);
+			} catch (error) {
+				console.error("SurfacingAgent query action failed", error);
+				return Response.json({
+					answer: "I could not answer this right now. Please retry.",
+					citations: [],
+					relatedCollections: [],
+					followUps: [],
+				});
+			}
 		}
 
 		if (payload.action === "digest") {
-			const digest = await this.generateWeeklyDigest();
-			return Response.json({ digest });
+			try {
+				const digest = await this.generateWeeklyDigest();
+				return Response.json({ digest });
+			} catch (error) {
+				console.error("SurfacingAgent digest action failed", error);
+				const rangeEnd = Date.now();
+				const rangeStart = rangeEnd - 7 * 24 * 60 * 60 * 1000;
+				const digest = this.emptyDigest(rangeStart, rangeEnd);
+				return Response.json({ digest });
+			}
 		}
 
 		return Response.json({ error: "Invalid action" }, { status: 400 });

@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -22,6 +23,8 @@ interface SlashCommandResult {
 	cleaned: string;
 	commands: string[];
 }
+
+const WIKI_LINK_PATTERN = /\[\[([^\]]+)\]\]/g;
 
 function parseSlashCommands(input: string): SlashCommandResult {
 	const lines = input.split("\n");
@@ -49,6 +52,54 @@ function extractText(message: UIMessage): string {
 		.map((part) => part.text)
 		.join("")
 		.trim();
+}
+
+function renderWikiLinkedText(text: string): ReactNode {
+	const lines = text.split("\n");
+
+	return lines.map((line, lineIndex) => {
+		const parts: ReactNode[] = [];
+		let lastIndex = 0;
+		WIKI_LINK_PATTERN.lastIndex = 0;
+
+		for (const match of line.matchAll(WIKI_LINK_PATTERN)) {
+			const fullMatch = match[0];
+			const label = (match[1] ?? "").trim();
+			const matchIndex = match.index ?? 0;
+
+			if (matchIndex > lastIndex) {
+				parts.push(
+					<span key={`text-${lineIndex}-${lastIndex}`}>{line.slice(lastIndex, matchIndex)}</span>,
+				);
+			}
+
+			if (label.length > 0) {
+				parts.push(
+					<a
+						key={`wiki-${lineIndex}-${matchIndex}`}
+						href={`/collections?query=${encodeURIComponent(label)}`}
+						className="text-primary underline underline-offset-2"
+					>
+						[[{label}]]
+					</a>,
+				);
+			} else {
+				parts.push(<span key={`empty-${lineIndex}-${matchIndex}`}>{fullMatch}</span>);
+			}
+
+			lastIndex = matchIndex + fullMatch.length;
+		}
+
+		if (lastIndex < line.length) {
+			parts.push(<span key={`tail-${lineIndex}`}>{line.slice(lastIndex)}</span>);
+		}
+
+		if (parts.length === 0) {
+			parts.push(<span key={`blank-${lineIndex}`}>&nbsp;</span>);
+		}
+
+		return <p key={`line-${lineIndex}`}>{parts}</p>;
+	});
 }
 
 export function NoteEditor({
@@ -249,8 +300,14 @@ export function NoteEditor({
 					}}
 					className="border-border bg-background min-h-[360px] w-full rounded-none border p-3 text-sm leading-relaxed"
 				/>
+				<div className="border-border bg-card min-h-[120px] border p-3 text-sm leading-relaxed">
+					{noteContent.trim().length > 0
+						? renderWikiLinkedText(noteContent)
+						: "No note content yet."}
+				</div>
 				<p className="text-muted-foreground text-xs">
-					Slash commands are routed to the agent and removed from the note surface.
+					Slash commands are routed to the agent and removed from the note surface. Wiki links like
+					[[Project X]] open the collections search.
 				</p>
 			</section>
 
@@ -258,7 +315,7 @@ export function NoteEditor({
 				<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">Streaming output</p>
 				<div className="border-border bg-card min-h-[360px] overflow-y-auto rounded-none border p-3 text-sm leading-relaxed">
 					{latestAssistantText.length > 0
-						? latestAssistantText
+						? renderWikiLinkedText(latestAssistantText)
 						: "Waiting for the first rewrite..."}
 				</div>
 			</section>

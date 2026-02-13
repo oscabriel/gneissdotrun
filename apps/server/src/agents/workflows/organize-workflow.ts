@@ -61,7 +61,7 @@ interface ExtractionSummary {
 	}>;
 }
 
-const ORGANIZATION_MODEL = "gemini-flash-3-preview";
+const ORGANIZATION_MODEL = "gemini-2.5-flash";
 
 const knowledgeDraftSchema = z.object({
 	entities: z

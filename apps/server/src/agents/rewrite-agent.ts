@@ -48,7 +48,7 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 		});
 
 		const result = streamText({
-			model: google("gemini-2.0-flash"),
+			model: google("gemini-2.5-flash"),
 			prompt,
 		});
 
@@ -128,5 +128,23 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 		});
 
 		await notifyIndexAgent(this.env, this.state.userId, indexStub);
+
+		try {
+			const namespace = this.env.ORGANIZATION_AGENT as DurableObjectNamespace;
+			const organizationAgentId = namespace.idFromName(this.state.userId);
+			const organizationAgent = namespace.get(organizationAgentId);
+			await organizationAgent.fetch("https://organization-agent/internal", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					action: "run_organize",
+					noteIds: [this.state.noteId],
+				}),
+			});
+		} catch (error) {
+			console.error("RewriteAgent failed to trigger organization workflow", error);
+		}
 	}
 }

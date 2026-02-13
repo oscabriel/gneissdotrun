@@ -3,4 +3,8 @@
 
 // For Cloudflare Workers, env is accessed via cloudflare:workers module
 // Types are defined in env.d.ts based on your alchemy.run.ts bindings
-export { env } from "cloudflare:workers";
+import { env as workerEnv } from "cloudflare:workers";
+
+export const env = workerEnv satisfies Cloudflare.Env & {
+	GOOGLE_GENERATIVE_AI_API_KEY: string;
+};

@@ -13,7 +13,7 @@ interface RouteRequest {
 }
 
 const MAX_DECISIONS = 50;
-const ROUTER_MODEL = "gemini-flash-3-preview";
+const ROUTER_MODEL = "gemini-2.5-flash";
 
 const llmRoutingDecisionSchema = z.object({
 	kind: z.enum([

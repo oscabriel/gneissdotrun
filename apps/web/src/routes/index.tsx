@@ -4,6 +4,7 @@ import { env } from "@gneissdotrun/env/web";
 
 import { CommandPalette } from "@/components/command-palette/CommandPalette";
 import { NoteEditor } from "@/components/editor/NoteEditor";
+import { SearchBar } from "@/components/search/SearchBar";
 import SignInForm from "@/components/sign-in-form";
 import SignUpForm from "@/components/sign-up-form";
 import { UploadPanel } from "@/components/uploads/UploadPanel";
@@ -150,22 +151,32 @@ function HomeComponent() {
 			<header className="border-border flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
 				<div>
 					<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">
-						Phase 2 Capture
+						Capture workspace
 					</p>
 					<h1 className="text-2xl font-semibold tracking-tight">Blank note workspace</h1>
 				</div>
-				<Button
-					variant="outline"
-					onClick={() => {
-						setActiveNote(null);
-						setTitle("");
-						setDraft("");
-						setError(null);
-					}}
-				>
-					New note session
-				</Button>
+				<div className="flex flex-wrap gap-2">
+					<a href="/collections">
+						<Button variant="outline">Collections</Button>
+					</a>
+					<a href="/digest">
+						<Button variant="outline">Digest</Button>
+					</a>
+					<Button
+						variant="outline"
+						onClick={() => {
+							setActiveNote(null);
+							setTitle("");
+							setDraft("");
+							setError(null);
+						}}
+					>
+						New note session
+					</Button>
+				</div>
 			</header>
+
+			<SearchBar />
 
 			<CommandPalette
 				onSelectCommand={(command) => {

@@ -64,12 +64,48 @@ const surfacingQueryPayloadSchema = z.object({
 	question: z.string().trim().min(1).max(5_000),
 });
 
+const collectionIdSchema = z
+	.string()
+	.trim()
+	.regex(/^collection_[0-9a-fA-F-]{36}$/);
+
+const collectionLifecyclePayloadSchema = z.discriminatedUnion("action", [
+	z.object({
+		action: z.literal("set_collection_status"),
+		collectionId: collectionIdSchema,
+		status: z.enum(["active", "resolved", "archived"]),
+	}),
+	z.object({
+		action: z.literal("rename_collection"),
+		collectionId: collectionIdSchema,
+		title: z.string().trim().min(1).max(120),
+	}),
+	z.object({
+		action: z.literal("refresh_collections"),
+	}),
+]);
+
 const surfacingQueryValidator = validator("json", (value, c) => {
 	const parsed = surfacingQueryPayloadSchema.safeParse(value);
 	if (!parsed.success) {
 		return c.json(
 			{
 				error: "Invalid surfacing query payload",
+				issues: parsed.error.flatten(),
+			},
+			400,
+		);
+	}
+
+	return parsed.data;
+});
+
+const collectionLifecycleValidator = validator("json", (value, c) => {
+	const parsed = collectionLifecyclePayloadSchema.safeParse(value);
+	if (!parsed.success) {
+		return c.json(
+			{
+				error: "Invalid collection lifecycle payload",
 				issues: parsed.error.flatten(),
 			},
 			400,
@@ -227,19 +263,19 @@ app.post("/api/notes", createNoteValidator, async (c) => {
 			c.env.ORGANIZATION_AGENT,
 			user.id,
 		);
-		await organizationAgent.fetch("https://organization-agent/internal", {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-			},
-			body: JSON.stringify({
-				noteId,
-				routing: {
-					kind: "new_note",
-					reason: "New note created from capture flow.",
+
+		if (input.content.trim().length > 0) {
+			await organizationAgent.fetch("https://organization-agent/internal", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
 				},
-			}),
-		});
+				body: JSON.stringify({
+					action: "run_organize",
+					noteIds: [noteId],
+				}),
+			});
+		}
 	} catch (error) {
 		console.error("Failed to notify agents", error);
 	}
@@ -341,6 +377,65 @@ app.post("/api/surfacing/query", surfacingQueryValidator, async (c) => {
 	};
 
 	return c.json(payload);
+});
+
+app.get("/api/collections", async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const organizationAgent = await getAgentByName<Env, OrganizationAgent>(
+		c.env.ORGANIZATION_AGENT,
+		user.id,
+	);
+	const response = await organizationAgent.fetch("https://organization-agent/internal", {
+		method: "GET",
+	});
+
+	if (!response.ok) {
+		return c.json({ error: "OrganizationAgent collections fetch failed" }, 502);
+	}
+
+	const payload = (await response.json()) as {
+		collections: Array<{
+			id: string;
+			title: string;
+			summary: string;
+			status: "active" | "resolved" | "archived";
+			noteCount: number;
+			lastCaptureAt: number | null;
+			updatedAt: number;
+		}>;
+	};
+
+	return c.json(payload);
+});
+
+app.post("/api/collections/lifecycle", collectionLifecycleValidator, async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const input = c.req.valid("json");
+	const organizationAgent = await getAgentByName<Env, OrganizationAgent>(
+		c.env.ORGANIZATION_AGENT,
+		user.id,
+	);
+	const response = await organizationAgent.fetch("https://organization-agent/internal", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+		},
+		body: JSON.stringify(input),
+	});
+
+	if (!response.ok) {
+		return c.json({ error: "OrganizationAgent collection lifecycle update failed" }, 502);
+	}
+
+	return c.json(await response.json());
 });
 
 app.get("/api/surfacing/digest", async (c) => {
@@ -501,6 +596,7 @@ app.get("/", (c) => {
 
 export {
 	ContradictionWorkflow,
+	FanOutWorkflow,
 	IndexAgent,
 	OrganizationAgent,
 	OrganizeWorkflow,

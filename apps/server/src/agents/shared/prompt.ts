@@ -14,6 +14,8 @@ export function buildRewritePrompt(input: RewritePromptInput): string {
 		"You are RewriteAgent for Gneiss.",
 		"Rewrite and organize the note in markdown while preserving user intent.",
 		"Use short sections and keep output practical.",
+		"When referencing entities, projects, or recurring topics, format internal links as [[Wiki Link]].",
+		"Preserve existing wiki links and add new ones only when they are grounded in the note content.",
 		`Routing kind: ${input.routing.kind}`,
 		`Routing confidence: ${input.routing.confidence}`,
 		`Routing reason: ${input.routing.reason}`,

@@ -19,7 +19,7 @@ interface ContradictionEnv {
 	DB: D1Database;
 }
 
-const CONTRADICTION_MODEL = "gemini-flash-3-preview";
+const CONTRADICTION_MODEL = "gemini-2.5-flash";
 
 const contradictionAnalysisSchema = z.object({
 	summary: z.string().trim().min(1).max(600),
