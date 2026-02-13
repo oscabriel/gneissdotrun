@@ -1,6 +1,6 @@
 import { Agent } from "agents";
 import { google } from "@ai-sdk/google";
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { AgentWorkflow, type AgentWorkflowEvent, type AgentWorkflowStep } from "agents/workflows";
 import z from "zod";
 
@@ -81,7 +81,7 @@ const knowledgeDraftSchema = z.object({
 				category: z.string().trim().max(80).default("general"),
 				confidence: z.number().min(0).max(100).default(70),
 				entityName: z.string().trim().max(120).optional(),
-				sourceNoteId: z.string().trim().uuid().optional(),
+				sourceNoteId: z.string().trim().pipe(z.uuid()).optional(),
 			}),
 		)
 		.max(100)
@@ -92,7 +92,7 @@ const knowledgeDraftSchema = z.object({
 				description: z.string().trim().min(1).max(240),
 				status: z.enum(["pending", "in_progress", "done"]).default("pending"),
 				deadlineIso: z.string().trim().optional(),
-				noteId: z.string().trim().uuid().optional(),
+				noteId: z.string().trim().pipe(z.uuid()).optional(),
 			}),
 		)
 		.max(60)
@@ -105,7 +105,7 @@ const collectionDraftSchema = z.object({
 			z.object({
 				title: z.string().trim().min(1).max(120),
 				summary: z.string().trim().max(320).default(""),
-				noteIds: z.array(z.string().trim().uuid()).max(24).default([]),
+				noteIds: z.array(z.string().trim().pipe(z.uuid())).max(24).default([]),
 			}),
 		)
 		.max(24)
@@ -268,14 +268,14 @@ async function generateKnowledgeDraft(notes: NoteSnapshot[]): Promise<KnowledgeD
 		`Notes:\n${JSON.stringify(notesForPrompt(notes))}`,
 	].join("\n\n");
 
-	const { object } = await generateObject({
+	const { output } = await generateText({
 		model: google(ORGANIZATION_MODEL),
-		schema: knowledgeDraftSchema,
+		output: Output.object({ schema: knowledgeDraftSchema }),
 		prompt,
 		temperature: 0.1,
 	});
 
-	return object;
+	return output;
 }
 
 async function generateCollectionDraft(
@@ -291,14 +291,14 @@ async function generateCollectionDraft(
 		`Extracted facts:\n${JSON.stringify(knowledge.facts.slice(0, 80))}`,
 	].join("\n\n");
 
-	const { object } = await generateObject({
+	const { output } = await generateText({
 		model: google(ORGANIZATION_MODEL),
-		schema: collectionDraftSchema,
+		output: Output.object({ schema: collectionDraftSchema }),
 		prompt,
 		temperature: 0.15,
 	});
 
-	return object;
+	return output;
 }
 
 async function generateContradictionDraft(knowledge: KnowledgeDraft): Promise<ContradictionDraft> {
@@ -313,14 +313,14 @@ async function generateContradictionDraft(knowledge: KnowledgeDraft): Promise<Co
 		`Facts:\n${JSON.stringify(knowledge.facts)}`,
 	].join("\n\n");
 
-	const { object } = await generateObject({
+	const { output } = await generateText({
 		model: google(ORGANIZATION_MODEL),
-		schema: contradictionDraftSchema,
+		output: Output.object({ schema: contradictionDraftSchema }),
 		prompt,
 		temperature: 0,
 	});
 
-	return object;
+	return output;
 }
 
 function buildExtractionSummary(

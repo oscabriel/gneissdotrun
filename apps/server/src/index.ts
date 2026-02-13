@@ -31,7 +31,7 @@ const createNoteValidator = validator("json", (value, c) => {
 		return c.json(
 			{
 				error: "Invalid note payload",
-				issues: parsed.error.flatten(),
+				issues: z.flattenError(parsed.error),
 			},
 			400,
 		);
@@ -41,7 +41,7 @@ const createNoteValidator = validator("json", (value, c) => {
 });
 
 const routeNotePayloadSchema = z.object({
-	noteId: z.string().uuid(),
+	noteId: z.uuid(),
 	userInput: z.string().trim().min(1).max(50_000),
 });
 
@@ -51,7 +51,7 @@ const routeNoteValidator = validator("json", (value, c) => {
 		return c.json(
 			{
 				error: "Invalid routing payload",
-				issues: parsed.error.flatten(),
+				issues: z.flattenError(parsed.error),
 			},
 			400,
 		);
@@ -91,7 +91,7 @@ const surfacingQueryValidator = validator("json", (value, c) => {
 		return c.json(
 			{
 				error: "Invalid surfacing query payload",
-				issues: parsed.error.flatten(),
+				issues: z.flattenError(parsed.error),
 			},
 			400,
 		);
@@ -106,7 +106,7 @@ const collectionLifecycleValidator = validator("json", (value, c) => {
 		return c.json(
 			{
 				error: "Invalid collection lifecycle payload",
-				issues: parsed.error.flatten(),
+				issues: z.flattenError(parsed.error),
 			},
 			400,
 		);

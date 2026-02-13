@@ -1,6 +1,6 @@
 import { google } from "@ai-sdk/google";
 import { Agent, callable } from "agents";
-import { embed, generateObject } from "ai";
+import { embed, generateText, Output } from "ai";
 import z from "zod";
 
 import type { AgentEnv } from "./shared";
@@ -65,7 +65,7 @@ const collectionIdSchema = z
 
 const querySynthesisSchema = z.object({
 	answer: z.string().trim().min(1).max(3200),
-	citationNoteIds: z.array(z.string().trim().uuid()).max(10).default([]),
+	citationNoteIds: z.array(z.string().trim().pipe(z.uuid())).max(10).default([]),
 	relatedCollectionIds: z.array(collectionIdSchema).max(10).default([]),
 	followUps: z.array(z.string().trim().min(1).max(160)).max(3).default([]),
 });
@@ -106,25 +106,25 @@ async function generateStructuredWithFallback(input: {
 	task: string;
 }): Promise<unknown> {
 	try {
-		const { object } = await generateObject({
+		const { output } = await generateText({
 			model: google(SURFACING_MODEL),
-			schema: input.schema,
+			output: Output.object({ schema: input.schema }),
 			prompt: input.prompt,
 			temperature: input.temperature,
 		});
 
-		return object as unknown;
+		return output as unknown;
 	} catch (primaryError) {
 		console.error(`SurfacingAgent ${input.task} failed on primary model`, primaryError);
 
-		const { object } = await generateObject({
+		const { output } = await generateText({
 			model: google(SURFACING_MODEL_FALLBACK),
-			schema: input.schema,
+			output: Output.object({ schema: input.schema }),
 			prompt: input.prompt,
 			temperature: input.temperature,
 		});
 
-		return object as unknown;
+		return output as unknown;
 	}
 }
 

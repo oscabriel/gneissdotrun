@@ -1,6 +1,6 @@
 import { Agent } from "agents";
 import { google } from "@ai-sdk/google";
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import z from "zod";
 
 import { RouterIndexCache } from "./router-index";
@@ -166,14 +166,14 @@ export class RouterAgent extends Agent<AgentEnv, RouterAgentState> {
 		noteIndex: LightweightNoteIndex[],
 	): Promise<RoutingDecision> {
 		const prompt = this.buildRoutingPrompt(request, noteIndex);
-		const { object } = await generateObject({
+		const { output } = await generateText({
 			model: google(ROUTER_MODEL),
-			schema: llmRoutingDecisionSchema,
+			output: Output.object({ schema: llmRoutingDecisionSchema }),
 			prompt,
 			temperature: 0.1,
 		});
 
-		return normalizeDecision(object);
+		return normalizeDecision(output);
 	}
 
 	private classifyWithHeuristics(input: string, noteContent: string): RoutingDecision {

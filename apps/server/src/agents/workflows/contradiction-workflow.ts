@@ -1,6 +1,6 @@
 import { Agent } from "agents";
 import { google } from "@ai-sdk/google";
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { AgentWorkflow, type AgentWorkflowEvent, type AgentWorkflowStep } from "agents/workflows";
 import z from "zod";
 
@@ -45,14 +45,14 @@ async function analyzeContradictionWithLlm(
 		`Fact B (${factB.id}): ${factB.text}`,
 	].join("\n\n");
 
-	const { object } = await generateObject({
+	const { output } = await generateText({
 		model: google(CONTRADICTION_MODEL),
-		schema: contradictionAnalysisSchema,
+		output: Output.object({ schema: contradictionAnalysisSchema }),
 		prompt,
 		temperature: 0,
 	});
 
-	return object;
+	return output;
 }
 
 function fallbackAnalysis(
