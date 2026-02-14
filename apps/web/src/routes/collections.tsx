@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { env } from "@gneissdotrun/env/web";
+import { Button } from "@cloudflare/kumo";
 
-import { SearchBar } from "@/components/search/SearchBar";
-import { Button } from "@/components/ui/button";
+import { SearchBar } from "@/components/search-bar";
 import { authClient } from "@/lib/auth-client";
 
 type CollectionStatus = "active" | "resolved" | "archived";
@@ -126,10 +126,10 @@ function CollectionsRoute() {
 		<div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-4 py-6">
 			<header className="border-border flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
 				<div>
-					<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">
+					<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
 						Phase 4 Surfacing
 					</p>
-					<h1 className="text-2xl font-semibold tracking-tight">Collections browser</h1>
+					<h1 className="text-3xl font-semibold tracking-tight">Collections browser</h1>
 				</div>
 				<div className="flex gap-2">
 					<a href="/">
@@ -145,7 +145,9 @@ function CollectionsRoute() {
 
 			<section className="border-border bg-card space-y-3 border p-4">
 				<div className="flex items-center justify-between">
-					<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">Collections</p>
+					<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+						Collections
+					</p>
 					<Button
 						variant="outline"
 						size="sm"

@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { env } from "@gneissdotrun/env/web";
-
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button, Input } from "@cloudflare/kumo";
 
 interface QueryResult {
 	answer: string;
@@ -68,7 +66,9 @@ export function SearchBar({ initialQuery = "" }: SearchBarProps) {
 	return (
 		<section className="border-border bg-card space-y-3 border p-4">
 			<div className="flex items-center justify-between gap-2">
-				<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">Hybrid search</p>
+				<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+					Hybrid search
+				</p>
 				{result ? (
 					<span className="text-muted-foreground text-xs">{result.citations.length} citations</span>
 				) : null}
@@ -76,11 +76,13 @@ export function SearchBar({ initialQuery = "" }: SearchBarProps) {
 
 			<div className="flex flex-col gap-2 sm:flex-row">
 				<Input
+					className="w-full"
 					value={query}
-					onChange={(event) => {
+					aria-label="Search query"
+					onChange={(event: ChangeEvent<HTMLInputElement>) => {
 						setQuery(event.target.value);
 					}}
-					onKeyDown={(event) => {
+					onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
 						if (event.key === "Enter") {
 							event.preventDefault();
 							void submit();

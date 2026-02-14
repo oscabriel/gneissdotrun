@@ -4,6 +4,28 @@ import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from "@tanst
 
 import type { orpc } from "@/utils/orpc";
 import appCss from "../index.css?url";
+
+const KUMO_THEME_SCRIPT = `(function () {
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const stored = localStorage.getItem("theme");
+  const hasExplicitPreference = stored === "light" || stored === "dark";
+
+  const applySystemTheme = function () {
+    document.documentElement.setAttribute("data-mode", media.matches ? "dark" : "light");
+  };
+
+  if (hasExplicitPreference) {
+    document.documentElement.setAttribute("data-mode", stored);
+    return;
+  }
+
+  applySystemTheme();
+
+  if (typeof media.addEventListener === "function") {
+    media.addEventListener("change", applySystemTheme);
+  }
+})();`;
+
 export interface RouterAppContext {
 	orpc: typeof orpc;
 	queryClient: QueryClient;
@@ -25,6 +47,19 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 		],
 		links: [
 			{
+				rel: "preconnect",
+				href: "https://fonts.googleapis.com",
+			},
+			{
+				rel: "preconnect",
+				href: "https://fonts.gstatic.com",
+				crossOrigin: "",
+			},
+			{
+				rel: "stylesheet",
+				href: "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap",
+			},
+			{
 				rel: "stylesheet",
 				href: appCss,
 			},
@@ -36,8 +71,9 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 
 function RootDocument() {
 	return (
-		<html lang="en" className="dark">
+		<html lang="en" suppressHydrationWarning>
 			<head>
+				<script dangerouslySetInnerHTML={{ __html: KUMO_THEME_SCRIPT }} />
 				<HeadContent />
 			</head>
 			<body>

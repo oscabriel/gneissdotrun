@@ -1,15 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import { env } from "@gneissdotrun/env/web";
+import { Button, Input } from "@cloudflare/kumo";
 
-import { CommandPalette } from "@/components/command-palette/CommandPalette";
-import { NoteEditor } from "@/components/editor/NoteEditor";
-import { SearchBar } from "@/components/search/SearchBar";
+import { CommandPalette } from "@/components/command-palette";
+import { NoteEditor } from "@/components/note-editor";
+import { SearchBar } from "@/components/search-bar";
 import SignInForm from "@/components/sign-in-form";
 import SignUpForm from "@/components/sign-up-form";
-import { UploadPanel } from "@/components/uploads/UploadPanel";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { UploadPanel } from "@/components/upload-panel";
 import { authClient } from "@/lib/auth-client";
 import {
 	useIndexAgent,
@@ -150,10 +149,10 @@ function HomeComponent() {
 			) : null}
 			<header className="border-border flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
 				<div>
-					<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">
-						Capture workspace
+					<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+						GNEISS
 					</p>
-					<h1 className="text-2xl font-semibold tracking-tight">Blank note workspace</h1>
+					<h1 className="text-3xl font-semibold tracking-tight">Capture Workspace</h1>
 				</div>
 				<div className="flex flex-wrap gap-2">
 					<a href="/collections">
@@ -197,12 +196,14 @@ function HomeComponent() {
 				</div>
 			) : (
 				<section className="border-border bg-card space-y-3 rounded-none border p-4">
-					<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">
+					<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
 						Start with a blank note
 					</p>
 					<Input
+						className="w-full"
 						value={title}
-						onChange={(event) => {
+						aria-label="Note title"
+						onChange={(event: ChangeEvent<HTMLInputElement>) => {
 							setTitle(event.target.value);
 						}}
 						placeholder="Optional title"
@@ -212,7 +213,7 @@ function HomeComponent() {
 						onChange={(event) => {
 							setDraft(event.target.value);
 						}}
-						className="border-border bg-background min-h-[220px] w-full rounded-none border p-3 text-sm leading-relaxed"
+						className="border-border bg-background min-h-55 w-full rounded-none border p-3 text-sm leading-relaxed"
 						placeholder="Write your raw capture here, then start the note session."
 					/>
 					<div className="flex items-center gap-2">

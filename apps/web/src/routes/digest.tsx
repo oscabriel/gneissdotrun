@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { env } from "@gneissdotrun/env/web";
+import { Button } from "@cloudflare/kumo";
 
-import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 
 interface WeeklyDigest {
@@ -118,10 +118,10 @@ function DigestRoute() {
 		<div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-4 px-4 py-6">
 			<header className="border-border flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
 				<div>
-					<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">
+					<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
 						Phase 4 Surfacing
 					</p>
-					<h1 className="text-2xl font-semibold tracking-tight">Weekly digest</h1>
+					<h1 className="text-3xl font-semibold tracking-tight">Weekly digest</h1>
 				</div>
 				<div className="flex gap-2">
 					<a href="/">
@@ -143,7 +143,7 @@ function DigestRoute() {
 			) : digest ? (
 				<section className="border-border bg-card space-y-4 border p-4 text-sm">
 					<div>
-						<h2 className="text-lg font-semibold">{digest.title}</h2>
+						<h2 className="text-xl font-semibold">{digest.title}</h2>
 						<p className="text-muted-foreground text-xs">
 							{new Date(digest.rangeStart).toLocaleDateString()} -{" "}
 							{new Date(digest.rangeEnd).toLocaleDateString()} · {digest.noteCount} notes ·{" "}
@@ -177,7 +177,7 @@ function StackList({ title, items }: { title: string; items: string[] }) {
 
 	return (
 		<div>
-			<p className="text-muted-foreground mb-1 text-[11px] uppercase">{title}</p>
+			<p className="text-muted-foreground mb-1 text-xs font-medium uppercase">{title}</p>
 			<ul className="space-y-1 text-xs">
 				{items.map((item) => (
 					<li key={`${title}-${item}`} className="border-border bg-background border px-3 py-2">

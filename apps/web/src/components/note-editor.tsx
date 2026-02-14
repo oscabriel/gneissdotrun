@@ -1,15 +1,13 @@
 import type { UIMessage } from "ai";
-import type { ReactNode } from "react";
+import type { ChangeEvent, KeyboardEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Button, Input } from "@cloudflare/kumo";
 
 import {
 	useRewriteAgentChat,
 	type RewriteAgentState,
 	type RewriteRoutingContext,
 } from "@/lib/agents/hooks";
-
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 
 interface NoteEditorProps {
 	noteId: string;
@@ -277,7 +275,9 @@ export function NoteEditor({
 	return (
 		<div className="grid gap-4 md:grid-cols-2">
 			<section className="space-y-2">
-				<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">Current note</p>
+				<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+					Current note
+				</p>
 				{pendingRemoteUpdate ? (
 					<div className="border-border bg-card space-y-2 border px-3 py-2 text-xs">
 						<p className="text-muted-foreground">{statusMessage ?? "Remote update waiting."}</p>
@@ -298,9 +298,9 @@ export function NoteEditor({
 					onChange={(event) => {
 						setNoteContent(event.target.value);
 					}}
-					className="border-border bg-background min-h-[360px] w-full rounded-none border p-3 text-sm leading-relaxed"
+					className="border-border bg-background min-h-90 w-full rounded-none border p-3 text-sm leading-relaxed"
 				/>
-				<div className="border-border bg-card min-h-[120px] border p-3 text-sm leading-relaxed">
+				<div className="border-border bg-card min-h-30 border p-3 text-sm leading-relaxed">
 					{noteContent.trim().length > 0
 						? renderWikiLinkedText(noteContent)
 						: "No note content yet."}
@@ -312,8 +312,10 @@ export function NoteEditor({
 			</section>
 
 			<section className="space-y-2">
-				<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">Streaming output</p>
-				<div className="border-border bg-card min-h-[360px] overflow-y-auto rounded-none border p-3 text-sm leading-relaxed">
+				<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+					Streaming output
+				</p>
+				<div className="border-border bg-card min-h-90 overflow-y-auto rounded-none border p-3 text-sm leading-relaxed">
 					{latestAssistantText.length > 0
 						? renderWikiLinkedText(latestAssistantText)
 						: "Waiting for the first rewrite..."}
@@ -321,14 +323,18 @@ export function NoteEditor({
 			</section>
 
 			<section className="space-y-2 md:col-span-2">
-				<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">Interaction</p>
+				<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+					Interaction
+				</p>
 				<div className="flex flex-col gap-2 sm:flex-row">
 					<Input
+						className="w-full"
 						value={prompt}
-						onChange={(event) => {
+						aria-label="Rewrite prompt"
+						onChange={(event: ChangeEvent<HTMLInputElement>) => {
 							setPrompt(event.target.value);
 						}}
-						onKeyDown={(event) => {
+						onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
 							if (event.key === "Enter") {
 								event.preventDefault();
 								void submitPrompt();

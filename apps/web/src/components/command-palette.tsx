@@ -1,7 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { Button, Input } from "@cloudflare/kumo";
 
 interface CommandPaletteProps {
 	onSelectCommand?: (command: string) => void;
@@ -53,7 +51,9 @@ export function CommandPalette({ onSelectCommand }: CommandPaletteProps) {
 	return (
 		<div className="relative">
 			<div className="border-border bg-card flex items-center justify-between rounded-none border px-3 py-2">
-				<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">Command palette</p>
+				<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+					Command palette
+				</p>
 				<Button variant="outline" size="sm" onClick={() => setOpen((value) => !value)}>
 					Cmd/Ctrl + K
 				</Button>
@@ -63,8 +63,10 @@ export function CommandPalette({ onSelectCommand }: CommandPaletteProps) {
 				<div className="border-border bg-background absolute z-20 mt-2 w-full rounded-none border p-3 shadow-sm">
 					<div className="mb-3">
 						<Input
+							className="w-full"
 							value={query}
-							onChange={(event) => {
+							aria-label="Command search"
+							onChange={(event: ChangeEvent<HTMLInputElement>) => {
 								setQuery(event.target.value);
 							}}
 							placeholder="Find command"

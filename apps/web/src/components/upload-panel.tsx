@@ -1,8 +1,6 @@
 import { env } from "@gneissdotrun/env/web";
-import { useState } from "react";
-
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { useState, type ChangeEvent } from "react";
+import { Button, Input } from "@cloudflare/kumo";
 
 interface UploadPanelProps {
 	noteId?: string;
@@ -62,11 +60,15 @@ export function UploadPanel({ noteId }: UploadPanelProps) {
 
 	return (
 		<div className="border-border bg-card space-y-3 rounded-none border p-3">
-			<p className="text-muted-foreground text-xs tracking-[0.2em] uppercase">Uploads</p>
+			<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+				Uploads
+			</p>
 			<div className="flex flex-col gap-2 sm:flex-row">
 				<Input
+					className="w-full"
 					type="file"
-					onChange={(event) => {
+					aria-label="Upload file"
+					onChange={(event: ChangeEvent<HTMLInputElement>) => {
 						setSelectedFile(event.target.files?.[0] ?? null);
 					}}
 				/>
