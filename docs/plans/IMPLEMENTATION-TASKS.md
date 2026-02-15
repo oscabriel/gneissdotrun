@@ -134,7 +134,7 @@ This backlog maps directly to `docs/plans/UX-OVERHAUL-PLAN.md` and is designed a
 
 - [ ] `UX-017` Drive sidebar list from `useIndexAgent` state as primary source.
 - [ ] `UX-018` Hydrate fallback from `GET /api/notes` when index state is cold/empty.
-- [ ] `UX-019` Persist selected note in route search params (`noteId`) with validation.
+- [ ] `UX-019` Persist selected note in workspace query param (`?noteId=`) with validation.
 - [ ] `UX-020` Restore selection from URL on reload/reconnect/new tab.
 - [ ] `UX-021` Open selected sidebar note in canvas immediately without extra confirmation.
 - [ ] `UX-022` Enforce sidebar ordering by `updatedAt DESC` from IndexAgent state.

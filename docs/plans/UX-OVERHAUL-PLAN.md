@@ -40,6 +40,38 @@ The app should feel like:
 - Replacing existing auth stack.
 
 ---
+## Locked Decisions Applied (`D-01` to `D-16`)
+
+These are implementation defaults for this plan and are not optional during UX overhaul execution.
+
+### Capture Contract Defaults (`D-01` to `D-05`)
+
+- Public capture endpoint is `POST /api/capture`.
+- `POST /api/notes/route` remains internal compatibility-only during migration, then removed.
+- Capture response uses canonical `RouteExecutionOutcome`.
+- `fan_out` returns accepted-then-background outcome with `secondaryEffects: [{ type: "queued_fanout" }]`.
+- Capture errors use canonical `CaptureError` envelope (`error.code`, `error.message`, `recoverable`).
+- Every route decision/outcome emits required audit fields: `eventId`, `userId`, `routeKind`, `uiAction`, `noteId?`, `secondaryEffects[]`, `success`, `errorCode?`, `timestamp`.
+
+### Route Behavior Defaults (`D-06` to `D-11`)
+
+- Route->server effect->UI behavior table in `docs/plans/UX-OVERHAUL-DECISION-SHEET.md` is canonical.
+- `split`/`fan_out` primary note selection is deterministic: highest router relevance score, then most recently touched note, then first created.
+- Non-note outcomes always reset the canvas to blank-ready state.
+- Ephemeral answers dismiss on next user input, with `8000ms` idle timeout.
+- `workspace_action` is allowlist-only in v1: `archive_note(s)`, `mark_collection_resolved`, `rename_collection`, `link_notes`, `unlink_notes`.
+- Duplicate/correction confidence gating: high=execute, medium=execute+explicit toast context, low=fallback to `new_note`.
+
+### Cross-Spec Defaults (`D-12` to `D-16`)
+
+- Product UI primary action label is `Save` (internal pipeline language remains "capture").
+- Active note navigation stays in workspace route via `?noteId=` during overhaul.
+- History launch scope is inspect + lightweight revert (confirmation + audit event).
+- Slash namespace split: editor formatting commands retain `/heading`, `/code`, etc; agent commands are `/ask`, `/research`, `/link`, `/summarize`, with freeform only for unknown editor commands.
+- Retrieval strategy is fallback-first at launch; vectors are enhancement, not blocker.
+
+---
+
 
 ## Workstreams
 
@@ -81,7 +113,7 @@ The app should feel like:
 
 - Build note list component fed by `useIndexAgent`.
 - Hydrate initial note list from `GET /api/notes` fallback when needed.
-- Keep selected note id in route state/search params.
+- Keep selected note id in workspace query param (`?noteId=`).
 - Clicking a note opens it in the canvas immediately.
 - Show update ordering by `updatedAt` from IndexAgent state.
 
@@ -107,7 +139,7 @@ The app should feel like:
   - one visible note surface
   - one interaction input affordance
   - one `Save` action
-- Keep slash parsing behavior, but ensure slash text never remains in document body after submit.
+- Keep slash parsing behavior with explicit agent commands (`/ask`, `/research`, `/link`, `/summarize`) and editor-command precedence; freeform slash falls back only when command is unknown to the editor.
 - Keep streaming rewrite visible as note morphing in the same canvas.
 - Keep conflict handling, but simplify UI copy and avoid "developer-state" messaging.
 
@@ -128,10 +160,11 @@ The app should feel like:
 
 ### Changes
 
-- Upgrade server orchestration in `apps/server/src/index.ts` and/or new capture endpoint to:
-  - classify
-  - execute
-  - return normalized client outcome payload
+- Standardize capture contract in `apps/server/src/index.ts` and/or new endpoint layer:
+  - `POST /api/capture` is the only public capture endpoint.
+  - `POST /api/notes/route` remains internal compatibility-only during migration and is removed after cutover.
+  - capture request path performs classify -> execute -> return canonical `RouteExecutionOutcome`.
+  - errors return canonical `CaptureError` envelope.
 - Implement execution handlers for:
   - `new_note`
   - `update_existing`
@@ -142,14 +175,18 @@ The app should feel like:
   - `ephemeral_answer`
   - `store_preference`
   - `duplicate`
-- Wire `fan_out` to workflow path (`apps/server/src/agents/workflows/fanout-workflow.ts`) instead of no-op classification.
-- Return route result metadata needed for UI transitions/toasts.
-
+- Enforce canonical route->UI behavior mapping from `UX-OVERHAUL-DECISION-SHEET.md`.
+- Wire `fan_out` to workflow path (`apps/server/src/agents/workflows/fanout-workflow.ts`) with accepted-then-background behavior and `queued_fanout` secondary effect.
+- Apply deterministic primary note selection for `split`/`fan_out` (router relevance -> most recently touched -> first created).
+- Restrict `workspace_action` execution to v1 allowlist only (`archive_note(s)`, `mark_collection_resolved`, `rename_collection`, `link_notes`, `unlink_notes`).
+- Apply confidence gating for `duplicate`/`correction` routes (high direct execute, medium execute + explicit toast context, low fallback to `new_note`).
+- Emit required capture audit/telemetry fields for every decision/outcome event.
 ### Acceptance Criteria
 
-- Route kinds trigger distinct behavior end-to-end.
-- Non-note routes return canvas to blank state automatically.
+- Route kinds trigger canonical behavior end-to-end according to the approved route->UI mapping.
+- Non-note routes return canvas to blank-ready state; ephemeral answers dismiss on next input or timeout at `8000ms` idle.
 - Duplicate/preference/action routes avoid polluting note list.
+- Workspace actions outside the v1 allowlist are rejected and surfaced with contract-compliant errors.
 
 ---
 
@@ -205,14 +242,16 @@ The app should feel like:
 ### Changes
 
 - Keep search UI secondary to canvas.
-- Wire embedding upserts during rewrite/organization flows using `apps/server/src/agents/vectorize.ts`.
+- Ship keyword + structured retrieval as the required launch path.
 - Keep keyword fallback path for reliability.
+- Wire embedding upserts during rewrite/organization flows using `apps/server/src/agents/vectorize.ts` as an enhancement path when vectors are enabled.
 - Preserve citations + related collections in response payloads.
 
 ### Acceptance Criteria
 
-- Search results continue to work without vectors.
+- Search results work for launch with vectors disabled.
 - With vectors enabled, semantic matches appear for non-keyword queries.
+- Vector readiness is not a launch gate for the UX overhaul.
 
 ---
 
@@ -246,12 +285,13 @@ The app should feel like:
 ### Changes
 
 - Add History view per note in web app (raw prompts/actions timeline).
-- Persist enough server-side detail to support history rendering and future revert controls.
+- Persist enough server-side detail to support history rendering plus lightweight revert at launch (with confirmation + audit event).
 - Add lightweight version snapshot model for note revert if not already present.
 
 ### Acceptance Criteria
 
 - User can inspect what changed and why for each rewrite interaction.
+- User can perform lightweight revert safely with explicit confirmation and audit logging.
 - Default note surface remains clean and transcript-free.
 
 ---

@@ -85,11 +85,11 @@ The hardest part of knowledge work is getting thoughts out of your head. Remove 
 - No folders to choose, no templates to fill
 - The blank page IS the capture surface — open the app, start typing
 - No categorization—just dump it and move on
-- One button ("Go") to save and let the agent handle the rest
+- One button ("Save") to capture and let the agent handle the rest
 - Every note is both a capture and a conversation with the agent
 
 **Anti-pattern:** Opening an app, choosing a folder, writing a title, tagging, choosing between "note" or "chat"
-**Our pattern:** Blank page → brain dump → Go → agent handles the rest
+**Our pattern:** Blank page → brain dump → Save → agent handles the rest
 
 ### 2. Organization is the Agent's Job
 
@@ -227,7 +227,7 @@ You don't need to micromanage the organization, but you should be able to see it
 
 > Just wrapped with Sarah. She's worried about the Q2 deadline but still thinks we can hit it if we cut the API redesign scope. Also, mobile app is now the priority. Need to update the roadmap doc before Friday.
 
-**Hit Go.** Move on with your day — or stay and watch.
+**Hit Save.** Move on with your day — or stay and watch.
 
 **If you leave:** Come back later and the note has been transformed. Your brain dump is gone. In its place: a clean, structured note titled "Sarah Meeting: Q2 Scope Decision" with organized sections, wiki links to [[API Redesign Scope]] and [[Q2 Roadmap]], and a detected action item (update roadmap by Friday).
 
@@ -334,7 +334,7 @@ Trends:
 
 **Option B: Open a new note and ask directly:**
 
-Press `N`, type: "What were Sarah's concerns about Q2?" Hit Go.
+Press `N`, type: "What were Sarah's concerns about Q2?" Hit Save.
 
 Your question disappears. The note transforms into a clean summary:
 
@@ -356,25 +356,25 @@ Type `/ask Did we ever resolve the API scope question?` — the slash command di
 
 > Also need milk and eggs from the store
 
-**Hit Go.** The blank page doesn't become a new note. Instead: a toast appears — "Added to [[Grocery List]]" — and the blank page resets. The agent recognized the input belonged to an existing note and routed it there. Your grocery list now includes milk and eggs, woven into the existing structure.
+**Hit Save.** The blank page doesn't become a new note. Instead: a toast appears — "Added to [[Grocery List]]" — and the blank page resets. The agent recognized the input belonged to an existing note and routed it there. Your grocery list now includes milk and eggs, woven into the existing structure.
 
 **Or you type:**
 
 > Archive all the quarterly review notes from last year
 
-**Hit Go.** No note is created. The agent executes the workspace action. Toast: "Archived 12 notes from Q1-Q4 2025." The blank page resets. The action is logged in your activity history.
+**Hit Save.** No note is created. The agent executes the workspace action. Toast: "Archived 12 notes from Q1-Q4 2025." The blank page resets. The action is logged in your activity history.
 
 **Or you type:**
 
 > I met with Sarah about Q2 scope and separately I had a design idea for the landing page
 
-**Hit Go.** Two notes are created — [[Sarah Meeting: Q2 Scope]] and [[Landing Page Design Idea]]. You're navigated to the first. Toast: "Also created: [[Landing Page Design Idea]]."
+**Hit Save.** Two notes are created — [[Sarah Meeting: Q2 Scope]] and [[Landing Page Design Idea]]. You're navigated to the first. Toast: "Also created: [[Landing Page Design Idea]]."
 
 **Or you type:**
 
 > What time is it in Tokyo?
 
-**The answer appears in the editor space.** No note is saved. The blank page resets after a moment, ready for the next thought. Your note list isn't polluted with trivia.
+**The answer appears in the editor space.** No note is saved. It dismisses on next user input or after `8000ms` idle, then the blank page resets, ready for the next thought. Your note list isn't polluted with trivia.
 
 ---
 
@@ -425,7 +425,7 @@ Pattern Detected:
 1. **The blank page is the only input surface**
    - No floating input bars, no chat panels, no separate capture widgets
    - Every note starts as a blank page — brain dump, query, or conversation
-   - One "Go" button; agent infers intent
+   - One "Save" button; agent infers intent
 
 2. **The note is the result, not the transcript**
    - User prompts are consumed by the agent and replaced with organized output
@@ -463,13 +463,13 @@ The roadmap follows the three-layer architecture: **CAPTURE → ORGANIZE → SUR
 - [ ] **Agent framework:** `agents` SDK with AIChatAgent for streaming conversations
 - [ ] **Auth:** `better-auth` backed by D1/KV
 - [ ] **Blank page capture UI:** New note as primary input surface
-  - Full-screen blank page with "Go" button
+  - Full-screen blank page with "Save" button
   - `N` key shortcut (desktop), `+` button (mobile top bar)
   - `Cmd+K` command palette (first option: new note)
   - Agent infers intent from content (note vs. query)
 - [ ] **Note-as-result model:** Agent rewrites/extends notes on each interaction
   - User input consumed and replaced with organized output
-  - Slash commands (`/ask`, `/research`, `/link`, `/summarize`, freeform `/`) disappear after processing
+  - Slash commands (`/ask`, `/research`, `/link`, `/summarize`) disappear after processing; freeform `/...` runs only when the slash token is unknown to editor formatting commands
   - Agent folds new content into existing note structure logically
   - Real-time content morphing animation when user stays to watch
   - Resumable streaming — if connection drops mid-rewrite, reconnects and continues
@@ -498,9 +498,10 @@ The roadmap follows the three-layer architecture: **CAPTURE → ORGANIZE → SUR
   - Mark notes as processed
   - Uses AgentWorkflow for durable multi-step execution with per-step retry
 - [ ] **Clustering engine:** Group related captures
-  - Semantic similarity (Vectorize embeddings)
   - Entity overlap (people, projects, topics mentioned)
+  - Keyword + structured overlap first (launch default)
   - Temporal proximity (same-day captures)
+  - Optional semantic similarity (Vectorize embeddings) when enabled
 - [ ] **Linking engine:** Connect collections
   - Cross-reference entities between collections
   - Detect contradictions (same topic, different claims)
@@ -882,9 +883,9 @@ function NoteEditor({ userId, noteId }) {
 1. **Clustering algorithm?** — HDBSCAN vs. simple threshold on embeddings vs. entity overlap?
 2. **Heartbeat scale?** — Per-user scheduled job or global batch processor?
 3. **LLM costs?** — Organization layer is AI-heavy; how to cap costs per user?
-4. **Vector index strategy?** — One Vectorize index for notes + collections, or separate?
+4. **Vector index strategy (optional enhancement)?** — If vectors are enabled, one Vectorize index for notes + collections, or separate?
 5. **OpenClaw protocol?** — Webhook for capture, but what about proactive pushes?
-6. **Vectorize maturity?** — Production-ready for our embedding dimensions? Evaluate Turbopuffer as alternative.
+6. **Vectorize maturity (optional enhancement)?** — If vectors are enabled post-launch, are they production-ready for our embedding dimensions? Evaluate Turbopuffer as alternative.
 7. **D1 row limits?** — 10GB per database. Fine for single-user; at scale, may need per-user D1 databases.
 8. **DO cold start latency?** — ~50-100ms for hibernated DOs. Test with full agent initialization.
 
@@ -905,16 +906,16 @@ function NoteEditor({ userId, noteId }) {
 3. **Build IndexAgent** — reactive note index, WebSocket broadcast to all tabs
 4. **Build RouterAgent** — input classification, routing taxonomy
 5. **Create D1 schema** — notes, entities, facts, collections
-6. **Build blank-page capture UI** — Full-screen new note with "Go" button, `N` key / `+` button shortcuts
+6. **Build blank-page capture UI** — Full-screen new note with "Save" button, `N` key / `+` button shortcuts
 7. **Build command palette** — `Cmd+K`, first option "New note"
-8. **Test capture flow** — Web app blank page → Go → Router → RewriteAgent → stream to client
+8. **Test capture flow** — Web app blank page → Save → Router → RewriteAgent → stream to client
 
 ### Phase 2: Organization Layer
 
 1. **Build OrganizationAgent** — scheduled heartbeat via `this.schedule()`
 2. **Build OrganizeWorkflow** — durable multi-step pipeline with per-step retry
 3. **Implement entity/fact extraction** — Detect people, projects, topics
-4. **Create clustering logic** — Group related notes via Vectorize embeddings
+4. **Create clustering logic** — Group related notes via entity/keyword overlap first; add Vectorize embeddings only when enabled
 5. **Build collection creation** — Auto-generate from clusters, write to D1
 6. **Test full loop** — Capture → Heartbeat → Collection created → IndexAgent notified
 

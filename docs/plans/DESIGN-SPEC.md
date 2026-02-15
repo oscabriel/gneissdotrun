@@ -321,7 +321,7 @@ There is no floating input bar. No chat widget. No capture overlay. The new note
 ```
 Desktop (new note):
 ┌─────────────────────────────────────────────────────┐
-│  [← back]                                    [Go]   │  ← minimal top bar
+│  [← back]                                    [Save]   │  ← minimal top bar
 │                                                     │
 │                                                     │
 │     What's on your mind?                            │  ← faint placeholder (Geist Mono)
@@ -334,7 +334,7 @@ Desktop (new note):
 
 Mobile (new note):
 ┌────────────────────┐
-│  [←]         [Go]  │  ← minimal top bar
+│  [←]         [Save]  │  ← minimal top bar
 │                    │
 │  What's on your    │
 │  mind?             │
@@ -345,9 +345,9 @@ Mobile (new note):
 └────────────────────┘
 ```
 
-### The "Go" Button
+### The "Save" Button
 
-One button. The user writes, then hits **Go** (or `Cmd+Enter` on desktop). The agent takes over.
+One button. The user writes, then hits **Save** (or `Cmd+Enter` on desktop). The agent takes over.
 
 The user's input is **consumed** by the agent. It does not persist as-is. The agent reads the brain dump, infers intent, and **replaces the content** with the result — a clean, organized note. The user's raw text is gone from the surface. What remains is the product of the agent's work: structured content, wiki links, detected action items, related context.
 
@@ -372,14 +372,14 @@ Within any note, the user can type a slash command on a new line to instruct the
 - `/research [topic]` — agent pulls from other notes and external sources, integrates findings
 - `/link` — agent finds and inserts relevant `[[wiki links]]`
 - `/summarize` — agent condenses and restructures the note
-- `/` followed by natural language — agent infers intent from any instruction
+- `/` + natural language only when the slash token is not a known editor formatting command
 
 **The slash command is ephemeral.** After the agent processes it, the command text disappears. The note is rewritten/extended with the result. The user never sees their prompt and the agent's response side by side — they only see the resulting note.
 
 ```
 Example — what the user sees over time:
 
-STEP 1: User types and hits Go:
+STEP 1: User types and hits Save:
 ┌─────────────────────────────────────────────────────┐
 │  Just met with Sarah. She's worried about Q2 but    │
 │  thinks we can hit it if we cut API redesign scope.  │
@@ -469,7 +469,7 @@ The history view lets users:
 
 ### Agent Routing: Not Everything Becomes a New Note
 
-The default pipeline is: user types → hits Go → agent creates a new note from the input. But not all inputs fit this pattern. The agent's first job is to **route** the input to the right outcome.
+The default pipeline is: user types → hits Save → agent creates a new note from the input. But not all inputs fit this pattern. The agent's first job is to **route** the input to the right outcome.
 
 #### Routing Taxonomy
 
@@ -477,11 +477,10 @@ The default pipeline is: user types → hits Go → agent creates a new note fro
 | ---------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
 | **New note**           | New topic, brain dump, query, research request                                   | New note created from input                             | Default — user sees note morph                                          |
 | **Update existing**    | Content belongs to an existing note (append/amend)                               | Existing note updated                                   | Navigate to updated note, or toast: "Added to [[Grocery List]]"         |
-| **Replace existing**   | Content supersedes an existing note                                              | Existing note rewritten                                 | Navigate to note, toast confirms replacement                            |
 | **Multi-note split**   | Input contains distinct unrelated topics                                         | Multiple notes created                                  | Primary note shown, toast: "Also created: [[Other Note]]"               |
 | **Multi-note fan-out** | Input touches several existing notes                                             | New note created + existing notes updated in background | New note shown, toast: "Also updated: [[Note A]], [[Note B]], 3 others" |
-| **Workspace action**   | Archive, reorganize, bulk operations, deep-linking requests                      | Action executed, no note created                        | Toast confirmation + entry in activity log                              |
-| **Ephemeral question** | Quick lookup, trivia, no lasting value                                           | Answer shown temporarily in the editor space            | Answer displays, then blank page resets. No note saved.                 |
+| **Workspace action**   | Allowlisted action request (`archive_note(s)`, `mark_collection_resolved`, `rename_collection`, `link_notes`, `unlink_notes`) | Action executed, no note created                        | Toast confirmation + entry in activity log                              |
+| **Ephemeral answer**   | Quick lookup, trivia, no lasting value                                           | Answer shown in canvas until next input or `8000ms` idle | Then canvas resets to blank-ready state. No note saved.                 |
 | **Preference/meta**    | Instructions about agent behavior ("always include action items")                | Preference stored, no note created                      | Toast: "Preference saved"                                               |
 | **Correction**         | Amends a specific fact in an existing note ("deadline is Wednesday, not Friday") | Existing note updated with corrected fact               | Toast: "Updated [[note name]]"                                          |
 | **Duplicate**          | Redundant with existing content                                                  | No new note created                                     | Toast: "Already captured in [[note name]]" with link                    |
@@ -492,7 +491,7 @@ The default pipeline is: user types → hits Go → agent creates a new note fro
 
 **Multi-note fan-out.** "Meeting with the team: Sarah is taking over the API project, David is moving to mobile, and we pushed the deadline to March." This touches [[Sarah]], [[API Project]], [[David]], [[Mobile]], and [[Q2 Roadmap]]. The agent creates one new meeting note AND updates the existing notes in the background. User sees the meeting note; toast lists what else was updated.
 
-**Ephemeral question.** "What time zone is Tokyo in?" The user doesn't want a note called "Tokyo Time Zone." The answer appears in the editor space temporarily (like a flash card), and then the blank page resets. No note is saved. No note list pollution. If the user wants to keep it, they can hit Go again or just start writing — the act of continuing to type signals "actually, make this a note."
+**Ephemeral answer.** "What time zone is Tokyo in?" The user doesn't want a note called "Tokyo Time Zone." The answer appears in the editor space and is dismissed on next user input or after `8000ms` idle, then the blank page resets. No note is saved. No note list pollution. If the user wants to keep it, they can hit Save again or just start writing — the act of continuing to type signals "actually, make this a note."
 
 **Correction/amendment.** "Actually, the deadline isn't Friday — it's next Wednesday." The agent finds the note with the Friday deadline, updates it, and navigates the user there (or toasts). No new note needed. The correction is logged in the destination note's conversation history.
 
@@ -502,12 +501,12 @@ The default pipeline is: user types → hits Go → agent creates a new note fro
 
 #### What the User Always Sees
 
-Regardless of routing, the blank page is always the starting point. After hitting Go:
+Regardless of routing, the blank page is always the starting point. After hitting Save:
 
 - If a new note is created → the blank page transforms into the note (morphing animation)
 - If an existing note is updated → the user is navigated to that note (crossfade transition), or stays on the blank page with a toast + link
 - If an action is executed or a preference is stored → toast confirmation, blank page resets, ready for the next thought
-- If an ephemeral question is answered → answer appears temporarily, then blank page resets
+- If an ephemeral answer is shown → it dismisses on next user input or after `8000ms` idle, then blank page resets
 
 The blank page is the universal entry point. It always returns to its empty state after non-note interactions, ready for the next thought.
 
@@ -562,12 +561,12 @@ Viewing/editing a note:
 │  (full screen)     │
 │                    │
 │                    │
-│            [Go]    │  ← appears when editing; bottom-right, above keyboard
+│            [Save]    │  ← appears when editing; bottom-right, above keyboard
 └────────────────────┘
 
 New note:
 ┌────────────────────┐
-│  [←]         [Go]  │  ← back + go button
+│  [←]         [Save]  │  ← back + Save button
 ├────────────────────┤
 │                    │
 │  What's on your    │
@@ -599,7 +598,7 @@ Motion should be **purposeful and subtle**. Like a stone dropped in still water 
 | **Page transitions**       | Crossfade, 150-200ms. No slide-in/out.                                                                    |
 | **Sidebar collapse**       | Smooth width transition, 200ms ease-out.                                                                  |
 | **Agent status pulse**     | Slow opacity pulse on status dot (2s cycle). Not bouncing.                                                |
-| **Note morphing**          | After Go: content smoothly rewrites — text fades/shifts as agent restructures. Like watching a live edit. |
+| **Note morphing**          | After Save: content smoothly rewrites — text fades/shifts as agent restructures. Like watching a live edit. |
 | **Slash command consumed** | Command text fades out, note content shifts to accommodate new structure. Smooth, not jarring.            |
 | **Note appear in list**    | Subtle fade-in from top. 150ms.                                                                           |
 | **Tag/link creation**      | Pill animates in from inline text. 200ms.                                                                 |
@@ -644,7 +643,7 @@ All design questions have been answered. This table is the canonical reference.
 | 7   | **Accent color**         | Near-monochrome only. Tailwind `stone` family for everything. No saturated accents.                                                                                                                                                                                                                                                                                                                                |
 | 8   | **Dark mode**            | Co-equal priority. Both light and dark are first-class. Target audience splits 50/50.                                                                                                                                                                                                                                                                                                                              |
 | 9   | **Branding**             | No in-app branding except optional small wordmark in sidebar footer. Branded landing page only.                                                                                                                                                                                                                                                                                                                    |
-| 10  | **Primary input**        | No floating input bar. The new note blank page IS the primary capture surface. One "Go" button. Agent infers intent.                                                                                                                                                                                                                                                                                               |
+| 10  | **Primary input**        | No floating input bar. The new note blank page IS the primary capture surface. One "Save" button. Agent infers intent.                                                                                                                                                                                                                                                                                               |
 | 11  | **Tag system**           | TBD. May be replaced with a more flexible system. Not locked in yet.                                                                                                                                                                                                                                                                                                                                               |
 | 12  | **New note behavior**    | Blank page, full screen, cursor focused. THE primary entry point. `N` key on desktop, `+` in top bar on mobile.                                                                                                                                                                                                                                                                                                    |
 | 13  | **Note-as-result**       | The note is the RESULT of the conversation, not the transcript. User prompts are consumed by the agent and replaced with clean, organized output. Slash commands disappear after processing. The note is always a unified document.                                                                                                                                                                                |
@@ -652,7 +651,7 @@ All design questions have been answered. This table is the canonical reference.
 | 15  | **Conversation history** | Raw thread (every user prompt + every agent action) preserved in a secondary "History" view — like git log for the note. Accessible on demand, never the default view. Supports revert to previous versions.                                                                                                                                                                                                       |
 | 16  | **Mobile top bar**       | Minimal: 3 elements max. Note title + `+` button (fixed, not floating FAB). Back arrow when navigated in.                                                                                                                                                                                                                                                                                                          |
 | 17  | **Command palette**      | `Cmd+K` on desktop. First option: new note. Also surfaces search, go-to-collection, power-user actions.                                                                                                                                                                                                                                                                                                            |
-| 18  | **Agent routing**        | Not all inputs create new notes. Agent routes to: new note, update existing, replace existing, multi-note split, workspace action, ephemeral answer, preference storage, correction, or duplicate detection. Blank page resets after non-note interactions.                                                                                                                                                        |
+| 18  | **Agent routing**        | Not all inputs create new notes. Agent routes to: new note, update existing, correction, multi-note split, multi-note fan-out, workspace action, ephemeral answer, preference storage, or duplicate detection. Blank page resets after non-note interactions.                                                                                                                                                     |
 | 19  | **Ephemeral threads**    | Every user interaction spawns a fresh, disposable agent thread — not a persistent conversation. The note is the source of truth; the thread is invisible infrastructure. The user never thinks about context windows, stale threads, or "starting a new chat." Each LLM call receives: current note + new input + compact context. Full message history is retained only for the History view, not as LLM context. |
 
 ---
@@ -661,8 +660,8 @@ All design questions have been answered. This table is the canonical reference.
 
 1. ~~Answer design questions~~ — All 18 resolved (see table above)
 2. **Apply Tailwind theme** — Switch from `neutral` to `stone`, add Libre Baskerville + Geist Mono fonts
-3. **Build static component library** — Sidebar, note list (4 view modes), blank-page new note, editor shell, agent status bar, command palette, Go button
+3. **Build static component library** — Sidebar, note list (4 view modes), blank-page new note, editor shell, agent status bar, command palette, Save button
 4. **Prototype the editor** with Tiptap + Libre Baskerville + markdown features + agent slash commands
-5. **Prototype note morphing** — Real-time content rewrite animation after Go/slash command. Smooth text transitions as agent restructures the document.
+5. **Prototype note morphing** — Real-time content rewrite animation after Save/slash command. Smooth text transitions as agent restructures the document.
 6. **Design the conversation history view** — Git-log-style diff view showing raw prompts + agent actions over time, with version revert
 7. **Design the graph view** as secondary exploration tool

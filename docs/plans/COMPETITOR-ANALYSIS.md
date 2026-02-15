@@ -116,7 +116,7 @@ The closest competitors are Mem.ai (has "Heads Up" proactive surfacing) and the 
 | ------------------- | ------------------------------- | ------------------------------------- |
 | AI                  | Plugin (fragmented)             | Native (core architecture)            |
 | Organization        | Manual (user creates structure) | Agent-driven (automatic)              |
-| Capture friction    | Open app, choose folder, write  | Blank page, brain dump, Go            |
+| Capture friction    | Open app, choose folder, write  | Blank page, brain dump, Save          |
 | Mobile              | Mediocre                        | Mobile-first PWA                      |
 | Proactive surfacing | None                            | Digests, contradictions, action items |
 | Data format         | Local markdown                  | Cloud (D1 SQLite + R2), exportable    |
@@ -302,7 +302,7 @@ The closest competitors are Mem.ai (has "Heads Up" proactive surfacing) and the 
 | Proactive      | Agent (new, limited)                 | Digests, contradictions, action items |
 | Note model     | Page (static until edited)           | Living document (agent rewrites)      |
 | Collaboration  | Core feature                         | Not in scope (share-page only)        |
-| Complexity     | High (databases, relations, rollups) | Low (blank page, Go button)           |
+| Complexity     | High (databases, relations, rollups) | Low (blank page, Save button)         |
 
 **Gneiss advantage:** Notion is a workspace; Gneiss is a thinking tool. Notion requires you to build the structure; Gneiss builds it for you. Notion's AI is an expensive add-on to an already complex system. Gneiss is designed for one person who wants to think, not configure.
 
@@ -417,12 +417,12 @@ The closest competitors are Mem.ai (has "Heads Up" proactive surfacing) and the 
 | -------------- | --------------------------------------------- | -------------------------------------------------------- |
 | AI model       | User-configured automations                   | Autonomous agent                                         |
 | Organization   | User builds with supertags + queries          | Agent builds with collections + entities                 |
-| Learning curve | Very high                                     | Very low (blank page → Go)                               |
+| Learning curve | Very high                                     | Very low (blank page → Save)                             |
 | Structure      | User-defined supertags                        | Agent-inferred clusters, facts, links                    |
 | Meeting notes  | Built-in transcription + extraction           | Via OpenClaw voice capture + agent processing            |
 | Proactive      | Event-triggered automations (user-configured) | Autonomous (heartbeat, digests, contradiction detection) |
 
-**Gneiss advantage:** Tana requires you to become a power user to get value. You must define supertags, build queries, configure automations. Gneiss requires you to dump thoughts and press Go. Tana's AI is powerful but user-initiated and user-configured. Gneiss's agent acts autonomously.
+**Gneiss advantage:** Tana requires you to become a power user to get value. You must define supertags, build queries, configure automations. Gneiss requires you to dump thoughts and press Save. Tana's AI is powerful but user-initiated and user-configured. Gneiss's agent acts autonomously.
 
 **Tana advantage:** If you want maximum control over your knowledge structure, Tana is unmatched. Power users who enjoy building systems will prefer Tana. Gneiss is for people who don't want to build systems — they want systems to build themselves.
 

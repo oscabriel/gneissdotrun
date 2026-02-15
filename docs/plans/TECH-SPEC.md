@@ -89,7 +89,7 @@ CAPTURE -> ORGANIZE -> SURFACE -> ACT
 
 ### UI Surfaces
 
-- **Blank-page new note** — THE primary capture surface. Full-screen editor with "Go" button. Agent infers intent. No separate capture bar or chat widget.
+- **Blank-page new note** — THE primary capture surface. Full-screen editor with "Save" button. Agent infers intent. No separate capture bar or chat widget.
 - **Note view** — The note is the cumulative result of user + agent collaboration. Always a clean document — no chat artifacts, no visible dividers, no "agent" labels. Content morphs in real time when agent is working.
 - **Conversation history** — Secondary "History" view per note. Git-log-style: raw user prompts + agent actions + version diffs. Supports revert. Never the default view.
 - **Command palette** — `Cmd+K` on desktop. First option: new note. Also surfaces search, go-to-collection, power-user actions.
@@ -159,6 +159,7 @@ app.use("/api/*", cors());
 app.use("/agents/*", agentsMiddleware());
 
 // API routes
+app.post("/api/capture", captureHandler);
 app.post("/api/openclaw/ingest", openclawIngestHandler);
 app.post("/api/openclaw/query", openclawQueryHandler);
 app.post("/api/openclaw/digest", openclawDigestHandler);
@@ -291,7 +292,7 @@ SurfacingAgent      (1 per user)   — query synthesis, digests (v1 minimal)
 
 ### Ephemeral Thread Model
 
-The RewriteAgent is a per-note Durable Object, but the **conversation within it is not a persistent thread the user re-enters**. Each user interaction (Go press, slash command) conceptually starts a fresh agent task scoped to that interaction. The agent receives:
+The RewriteAgent is a per-note Durable Object, but the **conversation within it is not a persistent thread the user re-enters**. Each user interaction (Save press, slash command) conceptually starts a fresh agent task scoped to that interaction. The agent receives:
 
 1. The current note content (source of truth)
 2. A compact context payload (user preferences, routing decision, relevant note summaries)
@@ -403,10 +404,10 @@ export class RouterAgent extends Agent<Env> {
 			case "update_existing":
 				return { route: "update_existing", noteId: decision.noteId };
 			case "ephemeral_answer":
-				return { route: "ephemeral", answer: decision.answer };
+				return { route: "ephemeral_answer", answer: decision.answer };
 			case "workspace_action":
 				await this.executeAction(decision.action);
-				return { route: "action_complete", message: decision.confirmation };
+				return { route: "workspace_action", message: decision.confirmation };
 			// ... split, fan_out, correction, duplicate, store_preference
 		}
 	}
@@ -787,15 +788,15 @@ RewriteAgent finishes rewrite:
 
 ### Inputs
 
-- **Blank-page note** (primary): User writes in the new note view, hits "Go." Agent consumes the content and rewrites/replaces it with organized output. User can watch in real time or leave and come back to the result. Notes are stored as Markdown.
-- **Slash command within note**: User types `/ask`, `/research`, `/link`, `/summarize`, or freeform `/` on a new line within an existing note. The command is consumed — it disappears, and the agent folds new content into the existing note, restructuring as needed.
+- **Blank-page note** (primary): User writes in the new note view, hits "Save." Agent consumes the content and rewrites/replaces it with organized output. User can watch in real time or leave and come back to the result. Notes are stored as Markdown.
+- **Slash command within note**: User types `/ask`, `/research`, `/link`, `/summarize`, or freeform `/...` only when the slash token is unknown to editor formatting commands. The command is consumed — it disappears, and the agent folds new content into the existing note, restructuring as needed.
 - **OpenClaw text** (optional): short messages and commands → stored as notes → agent rewrites
 - **OpenClaw voice** (optional): audio link + transcript → stored as notes → agent rewrites
 - **Email forward** (optional): raw email payload + metadata
 
 ### Processing Steps
 
-1. **From web app (Go):**
+1. **From web app (Save):**
    - Save raw user input to conversation history (AIChatAgent auto-manages)
    - RouterAgent classifies input → routing decision (< 1 second)
    - If `new_note`: Create note in D1, client connects to new RewriteAgent DO, streams rewrite
@@ -803,7 +804,7 @@ RewriteAgent finishes rewrite:
    - If `split`: Multiple RewriteAgent DOs created, primary streamed, others in background
    - If `fan_out`: Primary note streamed, OrganizationAgent queues background updates
    - If `workspace_action`: Execute action → toast → blank page resets
-   - If `ephemeral_answer`: Show answer temporarily → blank page resets
+   - If `ephemeral_answer`: Show answer until next user input or `8000ms` idle timeout → blank page resets
    - If `store_preference`: Save to D1 `user_preferences` → toast → blank page resets
    - If `duplicate`: Toast with link to existing note → blank page resets
 
@@ -817,7 +818,7 @@ RewriteAgent finishes rewrite:
 
 Managed automatically by AIChatAgent. Each RewriteAgent DO stores messages in its local SQLite (`cf_ai_chat_agent_messages` table). The `useAgentChat({ resume: true })` hook on the client auto-loads history and resumes interrupted streams.
 
-For version revert (post-v1), we maintain a custom `note_versions` table in the DO:
+For lightweight launch revert, we maintain a custom `note_versions` table in the DO:
 
 ```sql
 CREATE TABLE note_versions (

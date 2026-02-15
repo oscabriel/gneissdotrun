@@ -119,8 +119,8 @@ Web (TanStack Start + React)
 - `apps/web/src/components/editor/NoteEditor.tsx` streams note morphing + slash commands
 - `apps/web/src/components/command-palette/CommandPalette.tsx` handles global commands
 - `apps/web/src/components/search/SearchBar.tsx` for hybrid search results
-- `apps/web/src/routes/notes/$noteId.tsx` connects RewriteAgent to editor
-- `apps/web/src/routes/index.tsx` renders home + capture UI
+- `apps/web/src/routes/index.tsx` keeps workspace as primary with `?noteId=` selection; dedicated `apps/web/src/routes/notes/$noteId.tsx` remains optional follow-up
+- `apps/web/src/routes/index.tsx` renders workspace shell + capture UI
 
 Data + Schema
 

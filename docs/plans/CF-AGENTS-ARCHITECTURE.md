@@ -180,7 +180,7 @@ SurfacingAgent      (1 per user)   — query synthesis, digests
 ┌────────┴─────────────┐    ┌───────────┴─────────────────────────┐
 │  OrganizationAgent   │    │  RouterAgent (per user)             │
 │  (per user)          │    │                                     │
-│  Scheduled heartbeat │    │  Receives all "Go" presses          │
+│  Scheduled heartbeat │    │  Receives all "Save" presses          │
 │  every 6 hours       │    │  Single LLM call → routing decision │
 │  Extracts entities,  │    │  Routes to RewriteAgent, or         │
 │  facts, clusters     │    │  executes workspace action,         │
@@ -435,17 +435,17 @@ export class RouterAgent extends Agent<Env> {
 			case "update_existing":
 				return { route: "update_existing", noteId: decision.noteId };
 			case "ephemeral_answer":
-				return { route: "ephemeral", answer: decision.answer };
+				return { route: "ephemeral_answer", answer: decision.answer };
 			case "workspace_action":
 				await this.executeAction(decision.action);
-				return { route: "action_complete", message: decision.confirmation };
+				return { route: "workspace_action", message: decision.confirmation };
 			// ... split, fan_out, correction, duplicate, store_preference
 		}
 	}
 }
 ```
 
-**Design note:** RouterAgent is a DO (1-per-user) rather than a stateless Worker function because it caches the lightweight routing index (note titles, summaries, tags) in DO SQLite for fast classification. This avoids a D1 round-trip on every "Go" press. The index is updated via `@callable()` from IndexAgent whenever notes change. If routing latency becomes a concern, an alternative is caching the index in KV — but DO SQLite co-location is simpler and avoids cache invalidation issues.
+**Design note:** RouterAgent is a DO (1-per-user) rather than a stateless Worker function because it caches the lightweight routing index (note titles, summaries, tags) in DO SQLite for fast classification. This avoids a D1 round-trip on every "Save" press. The index is updated via `@callable()` from IndexAgent whenever notes change. If routing latency becomes a concern, an alternative is caching the index in KV — but DO SQLite co-location is simpler and avoids cache invalidation issues.
 
 ### Organization Heartbeat
 

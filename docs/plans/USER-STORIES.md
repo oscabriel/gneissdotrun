@@ -98,7 +98,7 @@ Press N (desktop) or tap + (mobile) → blank page, cursor blinking
     ↓
 Brain dump: type, paste, whatever. No title, no folder, no tags.
     ↓
-Hit Go (or Cmd+Enter)
+Hit Save (or Cmd+Enter)
     ↓
 Agent consumes the input. The brain dump is replaced with organized output.
 User's raw text is preserved in conversation history, not on the note surface.
@@ -116,7 +116,7 @@ User: Leave (come back to finished note) or stay (watch the note morph in real t
 
 - Blank page appears in <200ms after N/+ press
 - No folders, tags, or categories required
-- One button ("Go") — no choice between save and send
+- One button ("Save") — no choice between save and send
 - User's raw input is consumed and replaced with clean output
 - Raw input always preserved in conversation history for later reference
 
@@ -135,7 +135,7 @@ User types a slash command on a new line:
   /research passwordless authentication patterns
   /link (agent finds and inserts relevant wiki links)
   /summarize (agent condenses the note)
-  / [any natural language instruction]
+  / [natural language instruction] (only when slash token is unknown to editor formatting commands)
     ↓
 The slash command disappears. The agent rewrites/extends the note:
   • New content is folded into the existing structure logically
@@ -162,11 +162,11 @@ User sees:
 
 ### Flow 1c: ROUTE (Agent Decides Where Content Goes)
 
-**Initiating Actor:** Agent (after user hits Go)  
+**Initiating Actor:** Agent (after user hits Save)  
 **Duration:** <1 second for routing decision
 
 ```
-User hits Go on the blank page
+User hits Save on the blank page
     ↓
 Router Agent classifies input against:
   • Existing note titles, summaries, tags
@@ -179,7 +179,7 @@ Routing decision (one of):
   c) split → Multiple notes created, user sees primary, toast lists others
   d) fan_out → New note + background updates to existing notes
   e) workspace_action → Action executed, toast, blank page resets
-  f) ephemeral_answer → Temporary answer shown, no note saved
+  f) ephemeral_answer → Temporary answer shown until next user input or `8000ms` idle timeout, no note saved
   g) store_preference → Preference saved, toast, blank page resets
   h) correction → Existing note fact updated, toast
   i) duplicate → Redundancy flagged, link to existing note
@@ -307,7 +307,7 @@ PM: [Types on blank page]
      if we cut API redesign scope. Mobile app is now the priority. Need to update
      the roadmap before Friday."
 
-PM: Hits Go.
+PM: Hits Save.
 
 The brain dump disappears. The note transforms into:
 
