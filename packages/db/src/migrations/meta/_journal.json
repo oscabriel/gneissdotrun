@@ -22,6 +22,13 @@
       "when": 1770926449426,
       "tag": "0002_wide_jack_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1771203087335,
+      "tag": "0003_clumsy_clea",
+      "breakpoints": true
     }
   ]
 }
