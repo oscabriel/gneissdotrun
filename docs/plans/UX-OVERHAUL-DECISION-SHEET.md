@@ -179,21 +179,21 @@ type CaptureError = {
 
 ## Decision Log (fill as approved)
 
-| ID   | Status  | Final choice | Notes |
-| ---- | ------- | ------------ | ----- |
-| D-01 | Approved | `POST /api/capture` only public capture endpoint | Keep `POST /api/notes/route` internal compatibility-only; remove after migration (`UX-003`) |
-| D-02 | Approved | Canonical `RouteExecutionOutcome` schema | Use exact type defined in this sheet as cross-web/server contract |
-| D-03 | Approved | `fan_out` is accepted-then-background | Return immediate outcome with `secondaryEffects: [{ type: "queued_fanout" }]` |
-| D-04 | Approved | Standard `CaptureError` envelope | Use canonical `error.code`, `error.message`, `recoverable` shape |
-| D-05 | Approved | Required audit/telemetry event fields | Require: `eventId`, `userId`, `routeKind`, `uiAction`, `noteId?`, `secondaryEffects[]`, `success`, `errorCode?`, `timestamp` |
-| D-06 | Approved | Route->server effect->UI mapping table is canonical | Implement exactly as listed in this sheet |
-| D-07 | Approved | Deterministic primary note selection | Highest router relevance score; tie-break by most recent touched; else first created |
-| D-08 | Approved | Non-note routes reset canvas to blank-ready state | Applies to `workspace_action`, `store_preference`, `duplicate`, and post-ephemeral |
-| D-09 | Approved | Ephemeral answer dismissal lifecycle | Dismiss on next user input; auto-timeout at `8000ms` idle |
-| D-10 | Approved | v1 workspace action allowlist only | Allow: `archive_note(s)`, `mark_collection_resolved`, `rename_collection`, `link_notes`, `unlink_notes`; exclude destructive bulk delete |
-| D-11 | Approved | Confidence gating for duplicate/correction routes | High: execute; Medium: execute + explicit toast/link; Low: fallback to `new_note` |
-| D-12 | Approved | Canonical primary action label is `Save` | Keep internal term `capture` for pipeline language |
-| D-13 | Approved | Workspace route with `?noteId=` is primary model | Dedicated note route remains optional follow-up |
-| D-14 | Approved | History launch scope includes inspect + lightweight revert | Revert requires safe confirmation and audit event |
-| D-15 | Approved | Slash namespace split: editor vs agent commands | Editor keeps formatting slash commands; agent commands are `/ask`, `/research`, `/link`, `/summarize`, then unknown-command freeform |
-| D-16 | Approved | Retrieval strategy is fallback-first | Launch reliable keyword/structured retrieval first; vectors are enhancement, not blocker |
+| ID   | Status   | Final choice                                               | Notes                                                                                                                                    |
+| ---- | -------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| D-01 | Approved | `POST /api/capture` only public capture endpoint           | Keep `POST /api/notes/route` internal compatibility-only; remove after migration (`UX-003`)                                              |
+| D-02 | Approved | Canonical `RouteExecutionOutcome` schema                   | Use exact type defined in this sheet as cross-web/server contract                                                                        |
+| D-03 | Approved | `fan_out` is accepted-then-background                      | Return immediate outcome with `secondaryEffects: [{ type: "queued_fanout" }]`                                                            |
+| D-04 | Approved | Standard `CaptureError` envelope                           | Use canonical `error.code`, `error.message`, `recoverable` shape                                                                         |
+| D-05 | Approved | Required audit/telemetry event fields                      | Require: `eventId`, `userId`, `routeKind`, `uiAction`, `noteId?`, `secondaryEffects[]`, `success`, `errorCode?`, `timestamp`             |
+| D-06 | Approved | Route->server effect->UI mapping table is canonical        | Implement exactly as listed in this sheet                                                                                                |
+| D-07 | Approved | Deterministic primary note selection                       | Highest router relevance score; tie-break by most recent touched; else first created                                                     |
+| D-08 | Approved | Non-note routes reset canvas to blank-ready state          | Applies to `workspace_action`, `store_preference`, `duplicate`, and post-ephemeral                                                       |
+| D-09 | Approved | Ephemeral answer dismissal lifecycle                       | Dismiss on next user input; auto-timeout at `8000ms` idle                                                                                |
+| D-10 | Approved | v1 workspace action allowlist only                         | Allow: `archive_note(s)`, `mark_collection_resolved`, `rename_collection`, `link_notes`, `unlink_notes`; exclude destructive bulk delete |
+| D-11 | Approved | Confidence gating for duplicate/correction routes          | High: execute; Medium: execute + explicit toast/link; Low: fallback to `new_note`                                                        |
+| D-12 | Approved | Canonical primary action label is `Save`                   | Keep internal term `capture` for pipeline language                                                                                       |
+| D-13 | Approved | Workspace route with `?noteId=` is primary model           | Dedicated note route remains optional follow-up                                                                                          |
+| D-14 | Approved | History launch scope includes inspect + lightweight revert | Revert requires safe confirmation and audit event                                                                                        |
+| D-15 | Approved | Slash namespace split: editor vs agent commands            | Editor keeps formatting slash commands; agent commands are `/ask`, `/research`, `/link`, `/summarize`, then unknown-command freeform     |
+| D-16 | Approved | Retrieval strategy is fallback-first                       | Launch reliable keyword/structured retrieval first; vectors are enhancement, not blocker                                                 |

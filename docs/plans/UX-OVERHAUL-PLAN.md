@@ -40,6 +40,7 @@ The app should feel like:
 - Replacing existing auth stack.
 
 ---
+
 ## Locked Decisions Applied (`D-01` to `D-16`)
 
 These are implementation defaults for this plan and are not optional during UX overhaul execution.
@@ -71,7 +72,6 @@ These are implementation defaults for this plan and are not optional during UX o
 - Retrieval strategy is fallback-first at launch; vectors are enhancement, not blocker.
 
 ---
-
 
 ## Workstreams
 
@@ -181,6 +181,7 @@ These are implementation defaults for this plan and are not optional during UX o
 - Restrict `workspace_action` execution to v1 allowlist only (`archive_note(s)`, `mark_collection_resolved`, `rename_collection`, `link_notes`, `unlink_notes`).
 - Apply confidence gating for `duplicate`/`correction` routes (high direct execute, medium execute + explicit toast context, low fallback to `new_note`).
 - Emit required capture audit/telemetry fields for every decision/outcome event.
+
 ### Acceptance Criteria
 
 - Route kinds trigger canonical behavior end-to-end according to the approved route->UI mapping.
