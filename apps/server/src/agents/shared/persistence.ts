@@ -1,4 +1,6 @@
 import { createId } from "./id";
+import { embedNoteForVectorize, upsertEmbeddings } from "../vectorize";
+import { createAuditLog } from "../../audit";
 
 import type { IndexedNote } from "./agent-env";
 
@@ -20,6 +22,7 @@ interface NotePersistenceInput {
 interface AgentNamespaceEnv {
 	DB: D1Database;
 	INDEX_AGENT: unknown;
+	VECTORIZE: unknown;
 }
 
 async function hashContent(content: string): Promise<string> {
@@ -72,6 +75,37 @@ export async function persistNoteAndNotify(
 				now,
 			)
 			.run();
+	}
+
+	try {
+		await createAuditLog(env.DB, {
+			userId: input.userId,
+			noteId: input.noteId,
+			eventType: "rewrite_mutation",
+			routeKind: input.routingContext?.kind,
+			mutationKind: "persist_note_and_notify",
+			success: true,
+			payload: {
+				reason: input.routingContext?.reason ?? null,
+				contentHash,
+				updatedAt: now,
+				processedAt,
+				tags,
+			},
+			createdAt: now,
+		});
+	} catch (error) {
+		console.error("persistNoteAndNotify audit persistence failed", error);
+	}
+
+	try {
+		const embedding = await embedNoteForVectorize(
+			input.noteId,
+			`${trimmedTitle}\n\n${input.content}`,
+		);
+		await upsertEmbeddings(env.VECTORIZE as VectorizeIndex, [embedding]);
+	} catch (error) {
+		console.error("persistNoteAndNotify embedding upsert failed", error);
 	}
 
 	return {

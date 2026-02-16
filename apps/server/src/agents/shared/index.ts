@@ -3,3 +3,4 @@ export * from "./id";
 export * from "./persistence";
 export * from "./prompt";
 export * from "./text";
+export * from "./rewrite";

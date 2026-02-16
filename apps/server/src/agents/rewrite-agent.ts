@@ -1,14 +1,13 @@
 import { AIChatAgent } from "@cloudflare/ai-chat";
-import { createUIMessageStream, createUIMessageStreamResponse, streamText } from "ai";
-import { google } from "@ai-sdk/google";
+import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 
 import {
-	buildRewritePrompt,
 	createId,
+	generateRewriteText,
 	getLatestUserInput,
+	notifyIndexAgent,
 	persistNoteAndNotify,
 	splitIntoChunks,
-	notifyIndexAgent,
 } from "./shared";
 import type { AgentEnv, RewriteAgentState, RoutingDecision } from "./shared";
 
@@ -41,17 +40,6 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 			? this.state.noteContent
 			: "(empty note)";
 
-		const prompt = buildRewritePrompt({
-			noteContent,
-			userInput: latestUserInput,
-			routing,
-		});
-
-		const result = streamText({
-			model: google("gemini-2.5-flash"),
-			prompt,
-		});
-
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				const id = createId("rewrite");
@@ -60,19 +48,22 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 					id,
 				});
 
-				let buffer = "";
-				for await (const delta of result.textStream) {
-					buffer += delta;
-					for (const chunk of splitIntoChunks(delta)) {
-						writer.write({
-							type: "text-delta",
-							id,
-							delta: chunk,
-						});
-					}
-				}
+				const { prompt, text } = await generateRewriteText({
+					noteContent,
+					userInput: latestUserInput,
+					routing,
+					onDelta: async (delta) => {
+						for (const chunk of splitIntoChunks(delta)) {
+							writer.write({
+								type: "text-delta",
+								id,
+								delta: chunk,
+							});
+						}
+					},
+				});
 
-				const trimmed = buffer.trim();
+				const trimmed = text.trim();
 				if (trimmed.length > 0) {
 					await this.persistRewrite(trimmed, routing, routingPayload);
 				}

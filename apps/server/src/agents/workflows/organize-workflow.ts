@@ -4,7 +4,8 @@ import { generateText, Output } from "ai";
 import { AgentWorkflow, type AgentWorkflowEvent, type AgentWorkflowStep } from "agents/workflows";
 import z from "zod";
 
-import { createId } from "../shared";
+import { createStableId } from "../shared";
+import { embedNoteForVectorize, upsertEmbeddings } from "../vectorize";
 
 interface OrganizeParams {
 	userId: string;
@@ -14,6 +15,7 @@ interface OrganizeParams {
 interface OrganizeEnv {
 	DB: D1Database;
 	INDEX_AGENT: DurableObjectNamespace;
+	VECTORIZE: VectorizeIndex;
 }
 
 interface NoteSnapshot {
@@ -324,6 +326,7 @@ async function generateContradictionDraft(knowledge: KnowledgeDraft): Promise<Co
 }
 
 function buildExtractionSummary(
+	userId: string,
 	noteIds: string[],
 	notes: NoteSnapshot[],
 	knowledge: KnowledgeDraft,
@@ -341,7 +344,7 @@ function buildExtractionSummary(
 		}
 
 		entityByName.set(key, {
-			id: createId("entity"),
+			id: createStableId("entity", `${userId}:entity:${entity.name}:${entity.type || "topic"}`),
 			name: entity.name,
 			type: entity.type || "topic",
 			summary: entity.summary || "",
@@ -361,7 +364,10 @@ function buildExtractionSummary(
 			fact.sourceNoteId && validNoteIds.has(fact.sourceNoteId) ? fact.sourceNoteId : undefined;
 
 		return {
-			id: createId("fact"),
+			id: createStableId(
+				"fact",
+				`${userId}:fact:${fact.fact}:${fact.category || "general"}:${linkedEntity?.id ?? ""}:${sourceNoteId ?? ""}`,
+			),
 			entityId: linkedEntity?.id,
 			fact: fact.fact,
 			category: fact.category || "general",
@@ -375,18 +381,21 @@ function buildExtractionSummary(
 		count: mentionCountByEntityId.get(entity.id) ?? entity.count,
 	}));
 
-	const actionItems = knowledge.actionItems.slice(0, 60).map((action) => ({
-		id: createId("action"),
-		noteId: action.noteId && validNoteIds.has(action.noteId) ? action.noteId : undefined,
-		description: action.description,
-		deadline: parseDeadline(action.deadlineIso),
-		status: action.status,
-	}));
+	const actionItems = knowledge.actionItems.slice(0, 60).map((action) => {
+		const noteId = action.noteId && validNoteIds.has(action.noteId) ? action.noteId : undefined;
+		return {
+			id: createStableId("action", `${userId}:action:${action.description}:${noteId ?? ""}`),
+			noteId,
+			description: action.description,
+			deadline: parseDeadline(action.deadlineIso),
+			status: action.status,
+		};
+	});
 
 	const collections = collectionDraft.collections
 		.slice(0, 24)
 		.map((collection) => ({
-			id: createId("collection"),
+			id: createStableId("collection", `${userId}:collection:${collection.title}`),
 			title: collection.title,
 			summary: collection.summary,
 			noteIds: Array.from(new Set(collection.noteIds.filter((noteId) => validNoteIds.has(noteId)))),
@@ -395,7 +404,7 @@ function buildExtractionSummary(
 
 	if (!collections.length && noteIds.length > 0) {
 		collections.push({
-			id: createId("collection"),
+			id: createStableId("collection", `${userId}:collection:Recent captures`),
 			title: "Recent captures",
 			summary: "Auto-grouped captures from the latest ingest batch.",
 			noteIds: noteIds.filter((noteId) => validNoteIds.has(noteId)),
@@ -427,7 +436,7 @@ function buildExtractionSummary(
 
 		seenPairs.add(pairKey);
 		contradictions.push({
-			id: createId("contradiction"),
+			id: createStableId("contradiction", `${userId}:contradiction:${pairKey}`),
 			factAId,
 			factBId,
 			status: "open",
@@ -448,7 +457,7 @@ async function persistExtractions(env: OrganizeEnv, payload: ExtractionSummary, 
 
 	for (const entity of payload.entities) {
 		await env.DB.prepare(
-			"INSERT INTO entities (id, user_id, name, type, summary, mention_count, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+			"INSERT INTO entities (id, user_id, name, type, summary, mention_count, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(id) DO UPDATE SET name = excluded.name, type = excluded.type, summary = excluded.summary, mention_count = excluded.mention_count, updated_at = excluded.updated_at",
 		)
 			.bind(entity.id, userId, entity.name, entity.type, entity.summary, entity.count, now, now)
 			.run();
@@ -456,7 +465,7 @@ async function persistExtractions(env: OrganizeEnv, payload: ExtractionSummary, 
 
 	for (const fact of payload.facts) {
 		await env.DB.prepare(
-			"INSERT INTO facts (id, user_id, entity_id, fact, category, status, confidence, source_note_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+			"INSERT INTO facts (id, user_id, entity_id, fact, category, status, confidence, source_note_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(id) DO UPDATE SET entity_id = excluded.entity_id, fact = excluded.fact, category = excluded.category, status = excluded.status, confidence = excluded.confidence, source_note_id = excluded.source_note_id, updated_at = excluded.updated_at",
 		)
 			.bind(
 				fact.id,
@@ -475,7 +484,7 @@ async function persistExtractions(env: OrganizeEnv, payload: ExtractionSummary, 
 
 	for (const action of payload.actionItems) {
 		await env.DB.prepare(
-			"INSERT INTO action_items (id, user_id, note_id, description, deadline, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+			"INSERT INTO action_items (id, user_id, note_id, description, deadline, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(id) DO UPDATE SET note_id = excluded.note_id, description = excluded.description, deadline = excluded.deadline, status = excluded.status, updated_at = excluded.updated_at",
 		)
 			.bind(
 				action.id,
@@ -490,13 +499,26 @@ async function persistExtractions(env: OrganizeEnv, payload: ExtractionSummary, 
 			.run();
 	}
 
-	for (const collection of payload.collections) {
+	const collectionsById = new Map(
+		payload.collections.map((collection) => [collection.id, collection]),
+	);
+	for (const collection of collectionsById.values()) {
 		await env.DB.prepare(
-			"INSERT INTO collections (id, user_id, title, summary, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+			"INSERT INTO collections (id, user_id, title, summary, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(id) DO UPDATE SET title = excluded.title, summary = excluded.summary, status = excluded.status, updated_at = excluded.updated_at",
 		)
 			.bind(collection.id, userId, collection.title, collection.summary, "active", now, now)
 			.run();
+	}
 
+	const collectionIds = Array.from(collectionsById.keys());
+	if (collectionIds.length > 0) {
+		const placeholders = collectionIds.map(() => "?").join(",");
+		await env.DB.prepare(`DELETE FROM collection_notes WHERE collection_id IN (${placeholders})`)
+			.bind(...collectionIds)
+			.run();
+	}
+
+	for (const collection of collectionsById.values()) {
 		for (const noteId of collection.noteIds) {
 			await env.DB.prepare(
 				"INSERT INTO collection_notes (collection_id, note_id, created_at) VALUES (?1, ?2, ?3)",
@@ -508,7 +530,7 @@ async function persistExtractions(env: OrganizeEnv, payload: ExtractionSummary, 
 
 	for (const contradiction of payload.contradictions) {
 		await env.DB.prepare(
-			"INSERT INTO fact_contradictions (id, user_id, fact_a_id, fact_b_id, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+			"INSERT INTO fact_contradictions (id, user_id, fact_a_id, fact_b_id, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(id) DO UPDATE SET fact_a_id = excluded.fact_a_id, fact_b_id = excluded.fact_b_id, status = excluded.status, updated_at = excluded.updated_at",
 		)
 			.bind(
 				contradiction.id,
@@ -520,6 +542,30 @@ async function persistExtractions(env: OrganizeEnv, payload: ExtractionSummary, 
 				now,
 			)
 			.run();
+	}
+}
+
+async function upsertNoteEmbeddings(env: OrganizeEnv, notes: NoteSnapshot[]): Promise<void> {
+	const embeddings: Array<{ id: string; embedding: number[] }> = [];
+	for (const note of notes) {
+		try {
+			embeddings.push(await embedNoteForVectorize(note.id, `${note.title}\n\n${note.content}`));
+		} catch (error) {
+			console.error("OrganizeWorkflow embedding generation failed", {
+				noteId: note.id,
+				error,
+			});
+		}
+	}
+
+	if (!embeddings.length) {
+		return;
+	}
+
+	try {
+		await upsertEmbeddings(env.VECTORIZE, embeddings);
+	} catch (error) {
+		console.error("OrganizeWorkflow vector upsert failed", error);
 	}
 }
 
@@ -572,12 +618,23 @@ export class OrganizeWorkflow extends AgentWorkflow<Agent, OrganizeParams, unkno
 		await this.reportProgress({ stage: "contradictions", percent: 0.72 });
 
 		const summary = await step.do("assemble-extraction-summary", async () =>
-			buildExtractionSummary(noteIds, notes, knowledgeDraft, collectionDraft, contradictionDraft),
+			buildExtractionSummary(
+				userId,
+				noteIds,
+				notes,
+				knowledgeDraft,
+				collectionDraft,
+				contradictionDraft,
+			),
 		);
 		await this.reportProgress({ stage: "assembled", percent: 0.82 });
 
 		await step.do("persist", async () => {
 			await persistExtractions(this.env, summary, userId);
+		});
+
+		await step.do("upsert-embeddings", async () => {
+			await upsertNoteEmbeddings(this.env, notes);
 		});
 
 		await step.do("notify-index", async () => {
