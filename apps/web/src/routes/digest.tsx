@@ -119,18 +119,21 @@ function DigestRoute() {
 			<header className="border-border flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
 				<div>
 					<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
-						Phase 4 Surfacing
+						Optional review surface
 					</p>
 					<h1 className="text-3xl font-semibold tracking-tight">Weekly digest</h1>
+					<p className="text-muted-foreground mt-1 text-sm">
+						Use this when you want a periodic summary. Daily capture can stay in the workspace.
+					</p>
 				</div>
 				<div className="flex gap-2">
 					<a href="/">
-						<Button variant="outline">Capture</Button>
+						<Button variant="outline">Back to workspace</Button>
 					</a>
 					<a href="/collections">
-						<Button variant="outline">Collections</Button>
+						<Button variant="ghost">Collections</Button>
 					</a>
-					<Button onClick={() => void generateDigest()} disabled={isGenerating}>
+					<Button variant="outline" onClick={() => void generateDigest()} disabled={isGenerating}>
 						{isGenerating ? "Generating..." : "Generate digest"}
 					</Button>
 				</div>
@@ -162,7 +165,7 @@ function DigestRoute() {
 			) : (
 				<section className="border-border bg-card border p-4 text-xs">
 					<p className="text-muted-foreground">
-						No digest generated yet. Create one to surface trends.
+						No digest generated yet. Generate one when you want a periodic review.
 					</p>
 				</section>
 			)}

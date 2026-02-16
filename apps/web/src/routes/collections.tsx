@@ -24,16 +24,24 @@ interface LifecycleResult {
 	error?: string;
 }
 
+interface CollectionsSearch {
+	query: string;
+}
+
+function validateCollectionsSearch(search: Record<string, unknown>): CollectionsSearch {
+	const query = typeof search.query === "string" ? search.query.trim() : "";
+	return { query };
+}
+
 export const Route = createFileRoute("/collections")({
 	component: CollectionsRoute,
-	validateSearch: (search: Record<string, unknown>) => ({
-		query: typeof search.query === "string" ? search.query : "",
-	}),
+	validateSearch: validateCollectionsSearch,
 });
 
 function CollectionsRoute() {
 	const { data: session, isPending } = authClient.useSession();
 	const search = Route.useSearch();
+	const navigate = Route.useNavigate();
 	const [collections, setCollections] = useState<CollectionItem[]>([]);
 	const [isLoading, setIsLoading] = useState(false);
 	const [isUpdatingId, setIsUpdatingId] = useState<string | null>(null);
@@ -103,6 +111,18 @@ function CollectionsRoute() {
 		}
 	};
 
+	const handleSearchCommit = useCallback(
+		(nextQuery: string) => {
+			void navigate({
+				search: (previous) => ({
+					...previous,
+					query: nextQuery.trim(),
+				}),
+			});
+		},
+		[navigate],
+	);
+
 	if (isPending) {
 		return (
 			<div className="mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center px-4">
@@ -127,21 +147,22 @@ function CollectionsRoute() {
 			<header className="border-border flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
 				<div>
 					<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
-						Phase 4 Surfacing
+						Optional review surface
 					</p>
-					<h1 className="text-3xl font-semibold tracking-tight">Collections browser</h1>
+					<h1 className="text-3xl font-semibold tracking-tight">Collections</h1>
+					<p className="text-muted-foreground mt-1 text-sm">
+						Background organization groups related captures here. Reviewing is optional.
+					</p>
 				</div>
 				<div className="flex gap-2">
 					<a href="/">
-						<Button variant="outline">Capture</Button>
+						<Button variant="outline">Back to workspace</Button>
 					</a>
 					<a href="/digest">
-						<Button variant="outline">Digest</Button>
+						<Button variant="ghost">Digest</Button>
 					</a>
 				</div>
 			</header>
-
-			<SearchBar initialQuery={search.query} />
 
 			<section className="border-border bg-card space-y-3 border p-4">
 				<div className="flex items-center justify-between">
@@ -162,7 +183,8 @@ function CollectionsRoute() {
 
 				{collections.length === 0 ? (
 					<p className="text-muted-foreground text-xs">
-						No collections yet. Run organization and check back.
+						No collections yet. New captures are organized in the background and appear here
+						automatically.
 					</p>
 				) : (
 					<div className="space-y-3">
@@ -224,6 +246,14 @@ function CollectionsRoute() {
 					</div>
 				)}
 			</section>
+
+			<div>
+				<p className="text-muted-foreground mb-2 text-xs">
+					Need a targeted lookup? Search stays available here without interrupting canvas-first
+					capture.
+				</p>
+				<SearchBar query={search.query} onQueryCommit={handleSearchCommit} />
+			</div>
 		</div>
 	);
 }

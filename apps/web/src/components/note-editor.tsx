@@ -1,353 +1,507 @@
-import type { UIMessage } from "ai";
-import type { ChangeEvent, KeyboardEvent, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Input } from "@cloudflare/kumo";
+import type { KeyboardEvent, ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@cloudflare/kumo";
 
-import {
-	useRewriteAgentChat,
-	type RewriteAgentState,
-	type RewriteRoutingContext,
-} from "@/lib/agents/hooks";
+import { TextAreaField } from "@/components/text-area-field";
 
-interface NoteEditorProps {
-	noteId: string;
-	userId: string;
-	title: string;
-	initialContent: string;
-	routingContext: RewriteRoutingContext;
+interface RewriteProgressUpdate {
+   mode: "append" | "replace";
+   text: string;
 }
 
-interface SlashCommandResult {
-	cleaned: string;
-	commands: string[];
+interface NoteEditorProps {
+   noteId: string;
+   title: string;
+   initialContent: string;
+   onCapture: (
+      input: { userInput: string; noteId?: string },
+      options?: {
+         onRewriteProgress?: (update: RewriteProgressUpdate) => void;
+      },
+   ) => Promise<void>;
+   onSaveNoteContent: (input: { noteId: string; content: string; title?: string }) => Promise<void>;
+   onEditorInput: () => void;
+   isCapturing: boolean;
+   prefillInteraction?: { value: string; nonce: number } | null;
+}
+
+type SlashInstructionKind = "none" | "editor" | "agent" | "freeform";
+
+interface SlashInstruction {
+   kind: SlashInstructionKind;
+   commandName: string | null;
+   argument: string;
+   raw: string;
 }
 
 const WIKI_LINK_PATTERN = /\[\[([^\]]+)\]\]/g;
 
-function parseSlashCommands(input: string): SlashCommandResult {
-	const lines = input.split("\n");
-	const commands: string[] = [];
-	const cleanedLines: string[] = [];
+const EDITOR_FORMATTING_COMMANDS = new Set(["heading", "code", "quote", "bullets"]);
+const AGENT_COMMANDS = new Set(["ask", "research", "link", "summarize"]);
 
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (trimmed.startsWith("/")) {
-			commands.push(trimmed);
-			continue;
-		}
-		cleanedLines.push(line);
-	}
-
-	return {
-		cleaned: cleanedLines.join("\n").trimEnd(),
-		commands,
-	};
+function stripSlashCommandLines(input: string): string {
+   const lines = input.split("\n");
+   const filtered = lines.filter((line) => !/^\s*\/[a-z-]+(?:\s+.*)?\s*$/i.test(line.trim()));
+   return filtered.join("\n").trimEnd();
 }
 
-function extractText(message: UIMessage): string {
-	return message.parts
-		.filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-		.map((part) => part.text)
-		.join("")
-		.trim();
+function classifySlashInstruction(rawInput: string): SlashInstruction {
+   const raw = rawInput.trim();
+   if (!raw.startsWith("/")) {
+      return {
+         kind: "none",
+         commandName: null,
+         argument: raw,
+         raw,
+      };
+   }
+
+   const match = raw.match(/^\/([a-z-]+)\s*(.*)$/i);
+   if (!match) {
+      return {
+         kind: "freeform",
+         commandName: null,
+         argument: "",
+         raw,
+      };
+   }
+
+   const commandName = (match[1] ?? "").toLowerCase();
+   const argument = (match[2] ?? "").trim();
+
+   if (EDITOR_FORMATTING_COMMANDS.has(commandName)) {
+      return {
+         kind: "editor",
+         commandName,
+         argument,
+         raw,
+      };
+   }
+
+   if (AGENT_COMMANDS.has(commandName)) {
+      return {
+         kind: "agent",
+         commandName,
+         argument,
+         raw,
+      };
+   }
+
+   return {
+      kind: "freeform",
+      commandName,
+      argument,
+      raw,
+   };
+}
+
+function appendBlock(current: string, block: string): string {
+   if (!current.trim()) {
+      return block;
+   }
+
+   return `${current.trimEnd()}\n\n${block}`;
+}
+
+function applyEditorFormatting(current: string, commandName: string, argument: string): string {
+   switch (commandName) {
+      case "heading": {
+         const text = argument || "New heading";
+         return appendBlock(current, `# ${text}`);
+      }
+      case "code": {
+         const text = argument || "// Add code";
+         return appendBlock(current, `\`\`\`\n${text}\n\`\`\``);
+      }
+      case "quote": {
+         const text = argument || "Quote";
+         return appendBlock(current, `> ${text}`);
+      }
+      case "bullets": {
+         const lines = argument
+            ? argument
+               .split(";")
+               .map((line) => line.trim())
+               .filter(Boolean)
+            : ["List item"];
+
+         return appendBlock(current, lines.map((line) => `- ${line}`).join("\n"));
+      }
+      default:
+         return current;
+   }
 }
 
 function renderWikiLinkedText(text: string): ReactNode {
-	const lines = text.split("\n");
+   const lines = text.split("\n");
 
-	return lines.map((line, lineIndex) => {
-		const parts: ReactNode[] = [];
-		let lastIndex = 0;
-		WIKI_LINK_PATTERN.lastIndex = 0;
+   return lines.map((line, lineIndex) => {
+      const parts: ReactNode[] = [];
+      let lastIndex = 0;
+      WIKI_LINK_PATTERN.lastIndex = 0;
 
-		for (const match of line.matchAll(WIKI_LINK_PATTERN)) {
-			const fullMatch = match[0];
-			const label = (match[1] ?? "").trim();
-			const matchIndex = match.index ?? 0;
+      for (const match of line.matchAll(WIKI_LINK_PATTERN)) {
+         const fullMatch = match[0];
+         const label = (match[1] ?? "").trim();
+         const matchIndex = match.index ?? 0;
 
-			if (matchIndex > lastIndex) {
-				parts.push(
-					<span key={`text-${lineIndex}-${lastIndex}`}>{line.slice(lastIndex, matchIndex)}</span>,
-				);
-			}
+         if (matchIndex > lastIndex) {
+            parts.push(
+               <span key={`text-${lineIndex}-${lastIndex}`}>{line.slice(lastIndex, matchIndex)}</span>,
+            );
+         }
 
-			if (label.length > 0) {
-				parts.push(
-					<a
-						key={`wiki-${lineIndex}-${matchIndex}`}
-						href={`/collections?query=${encodeURIComponent(label)}`}
-						className="text-primary underline underline-offset-2"
-					>
-						[[{label}]]
-					</a>,
-				);
-			} else {
-				parts.push(<span key={`empty-${lineIndex}-${matchIndex}`}>{fullMatch}</span>);
-			}
+         if (label.length > 0) {
+            parts.push(
+               <a
+                  key={`wiki-${lineIndex}-${matchIndex}`}
+                  href={`/collections?query=${encodeURIComponent(label)}`}
+                  className="text-kumo-link underline underline-offset-2"
+               >
+                  [[{label}]]
+               </a>,
+            );
+         } else {
+            parts.push(<span key={`empty-${lineIndex}-${matchIndex}`}>{fullMatch}</span>);
+         }
 
-			lastIndex = matchIndex + fullMatch.length;
-		}
+         lastIndex = matchIndex + fullMatch.length;
+      }
 
-		if (lastIndex < line.length) {
-			parts.push(<span key={`tail-${lineIndex}`}>{line.slice(lastIndex)}</span>);
-		}
+      if (lastIndex < line.length) {
+         parts.push(<span key={`tail-${lineIndex}`}>{line.slice(lastIndex)}</span>);
+      }
 
-		if (parts.length === 0) {
-			parts.push(<span key={`blank-${lineIndex}`}>&nbsp;</span>);
-		}
+      if (parts.length === 0) {
+         parts.push(<span key={`blank-${lineIndex}`}>&nbsp;</span>);
+      }
 
-		return <p key={`line-${lineIndex}`}>{parts}</p>;
-	});
+      return <p key={`line-${lineIndex}`}>{parts}</p>;
+   });
 }
 
 export function NoteEditor({
-	noteId,
-	userId,
-	title,
-	initialContent,
-	routingContext,
+   noteId,
+   title,
+   initialContent,
+   onCapture,
+   onSaveNoteContent,
+   onEditorInput,
+   isCapturing,
+   prefillInteraction,
 }: NoteEditorProps) {
-	const [noteContent, setNoteContent] = useState(initialContent);
-	const [prompt, setPrompt] = useState("");
-	const [pendingRemoteUpdate, setPendingRemoteUpdate] = useState<string | null>(null);
-	const [statusMessage, setStatusMessage] = useState<string | null>(null);
-	const lastAcknowledgedContentRef = useRef(initialContent);
-	const noteContentRef = useRef(initialContent);
+   const [noteContent, setNoteContent] = useState(stripSlashCommandLines(initialContent));
+   const [interactionDraft, setInteractionDraft] = useState("");
+   const [pendingRemoteUpdate, setPendingRemoteUpdate] = useState<string | null>(null);
+   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+   const lastAcknowledgedContentRef = useRef(stripSlashCommandLines(initialContent));
+   const noteContentRef = useRef(stripSlashCommandLines(initialContent));
+   const interactionInputRef = useRef<HTMLTextAreaElement | null>(null);
+   const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+   const [isEditingNote, setIsEditingNote] = useState(false);
 
-	const { agent, messages, sendMessage, status } = useRewriteAgentChat({
-		noteId,
-		onStateUpdate: (state: RewriteAgentState) => {
-			const incoming = state.noteContent;
-			const lastAck = lastAcknowledgedContentRef.current;
-			const hasLocalEdits = noteContentRef.current !== lastAck;
+   const resizeNoteTextarea = () => {
+      const textarea = noteTextareaRef.current;
+      if (!textarea) {
+         return;
+      }
 
-			if (hasLocalEdits && incoming !== noteContentRef.current) {
-				setPendingRemoteUpdate(incoming);
-				setStatusMessage("Incoming update available. Review before applying.");
-				return;
-			}
+      textarea.style.height = "0px";
+      textarea.style.height = `${textarea.scrollHeight}px`;
+   };
 
-			lastAcknowledgedContentRef.current = incoming;
-			setPendingRemoteUpdate(null);
-			setStatusMessage(null);
-			setNoteContent(incoming);
-		},
-	});
+   useEffect(() => {
+      const sanitized = stripSlashCommandLines(initialContent);
+      const hasLocalEdits = noteContentRef.current !== lastAcknowledgedContentRef.current;
 
-	useEffect(() => {
-		setNoteContent(initialContent);
-		lastAcknowledgedContentRef.current = initialContent;
-		noteContentRef.current = initialContent;
-		setPendingRemoteUpdate(null);
-		setStatusMessage(null);
-		agent.setState({
-			noteId,
-			userId,
-			title,
-			noteContent: initialContent,
-			routingContext,
-			updatedAt: Date.now(),
-		});
-	}, [agent, initialContent, noteId, routingContext, title, userId]);
+      if (hasLocalEdits && sanitized !== noteContentRef.current) {
+         setPendingRemoteUpdate(sanitized);
+         setStatusMessage("A newer rewrite is available. Apply it or dismiss it.");
+         return;
+      }
 
-	useEffect(() => {
-		noteContentRef.current = noteContent;
-	}, [noteContent]);
+      setNoteContent(sanitized);
+      noteContentRef.current = sanitized;
+      lastAcknowledgedContentRef.current = sanitized;
+      setPendingRemoteUpdate(null);
+      setStatusMessage(null);
+   }, [initialContent, noteId]);
 
-	const latestAssistantText = useMemo(() => {
-		for (let index = messages.length - 1; index >= 0; index -= 1) {
-			const message = messages[index];
-			if (!message || message.role !== "assistant") {
-				continue;
-			}
+   useEffect(() => {
+      setIsEditingNote(false);
+   }, [noteId]);
 
-			const text = extractText(message);
-			if (text.length > 0) {
-				return text;
-			}
-		}
+   useEffect(() => {
+      if (!isEditingNote) {
+         return;
+      }
 
-		return "";
-	}, [messages]);
+      noteTextareaRef.current?.focus();
+   }, [isEditingNote]);
 
-	useEffect(() => {
-		if (latestAssistantText.length === 0) {
-			return;
-		}
+   useLayoutEffect(() => {
+      if (!isEditingNote) {
+         return;
+      }
 
-		const lastAck = lastAcknowledgedContentRef.current;
-		const hasLocalEdits = noteContentRef.current !== lastAck;
-		if (hasLocalEdits) {
-			setPendingRemoteUpdate(latestAssistantText);
-			setStatusMessage("Agent finished a rewrite. Apply when ready.");
-			return;
-		}
+      resizeNoteTextarea();
+   }, [isEditingNote, noteContent]);
 
-		lastAcknowledgedContentRef.current = latestAssistantText;
-		setPendingRemoteUpdate(null);
-		setStatusMessage(null);
-		setNoteContent(latestAssistantText);
-		agent.setState({
-			noteId,
-			userId,
-			title,
-			noteContent: latestAssistantText,
-			routingContext,
-			updatedAt: Date.now(),
-		});
-	}, [agent, latestAssistantText, noteId, routingContext, title, userId]);
+   useEffect(() => {
+      if (!prefillInteraction?.value) {
+         return;
+      }
 
-	const submitPrompt = async () => {
-		const trimmed = prompt.trim();
-		if (trimmed.length === 0) {
-			return;
-		}
+      onEditorInput();
+      setInteractionDraft((current) => {
+         const separator = current.trim().length > 0 ? "\n" : "";
+         return `${current}${separator}${prefillInteraction.value} `;
+      });
+      interactionInputRef.current?.focus();
+   }, [onEditorInput, prefillInteraction?.nonce, prefillInteraction?.value]);
 
-		const parsedPrompt = parseSlashCommands(trimmed);
-		const commandText = parsedPrompt.commands.join("\n");
-		const text = parsedPrompt.cleaned;
-		const payload = [text, commandText].filter((value) => value.length > 0).join("\n\n");
-		if (payload.trim().length === 0) {
-			setPrompt("");
-			return;
-		}
+   const applyPendingUpdate = () => {
+      if (!pendingRemoteUpdate) {
+         return;
+      }
 
-		if (parsedPrompt.commands.length > 0 && parsedPrompt.cleaned !== noteContent) {
-			setNoteContent(parsedPrompt.cleaned);
-			lastAcknowledgedContentRef.current = parsedPrompt.cleaned;
-			noteContentRef.current = parsedPrompt.cleaned;
-			agent.setState({
-				noteId,
-				userId,
-				title,
-				noteContent: parsedPrompt.cleaned,
-				routingContext,
-				updatedAt: Date.now(),
-			});
-		}
+      setNoteContent(pendingRemoteUpdate);
+      noteContentRef.current = pendingRemoteUpdate;
+      lastAcknowledgedContentRef.current = pendingRemoteUpdate;
+      setPendingRemoteUpdate(null);
+      setStatusMessage("Rewrite applied.");
+   };
 
-		await sendMessage({
-			role: "user",
-			parts: [{ type: "text", text: payload }],
-		});
+   const dismissPendingUpdate = () => {
+      setPendingRemoteUpdate(null);
+      setStatusMessage("Rewrite dismissed. Your current draft is unchanged.");
+   };
 
-		setPrompt("");
-	};
+   const submitInteraction = async () => {
+      const trimmed = interactionDraft.trim();
+      if (!trimmed) {
+         if (noteContentRef.current === lastAcknowledgedContentRef.current) {
+            return;
+         }
 
-	const applyPendingUpdate = () => {
-		if (!pendingRemoteUpdate) {
-			return;
-		}
+         try {
+            await onSaveNoteContent({
+               noteId,
+               title,
+               content: noteContentRef.current,
+            });
+            lastAcknowledgedContentRef.current = noteContentRef.current;
+            setPendingRemoteUpdate(null);
+            setStatusMessage("Saved.");
+         } catch {
+            setStatusMessage("Save failed. Keep editing and try again.");
+         }
+         return;
+      }
 
-		lastAcknowledgedContentRef.current = pendingRemoteUpdate;
-		setNoteContent(pendingRemoteUpdate);
-		setPendingRemoteUpdate(null);
-		setStatusMessage(null);
-		agent.setState({
-			noteId,
-			userId,
-			title,
-			noteContent: pendingRemoteUpdate,
-			routingContext,
-			updatedAt: Date.now(),
-		});
-	};
+      onEditorInput();
+      const instruction = classifySlashInstruction(trimmed);
 
-	const keepLocalEdits = () => {
-		setPendingRemoteUpdate(null);
-		setStatusMessage("Kept local edits. Agent update dismissed.");
-	};
+      if (instruction.kind === "editor" && instruction.commandName) {
+         const formatted = applyEditorFormatting(
+            noteContentRef.current,
+            instruction.commandName,
+            instruction.argument,
+         );
+         const sanitized = stripSlashCommandLines(formatted);
+         setNoteContent(sanitized);
+         noteContentRef.current = sanitized;
+         setPendingRemoteUpdate(null);
 
-	const promptHint = useMemo(() => {
-		const trimmed = prompt.trim();
-		if (!trimmed.startsWith("/")) {
-			return null;
-		}
+         try {
+            await onSaveNoteContent({
+               noteId,
+               title,
+               content: sanitized,
+            });
+            lastAcknowledgedContentRef.current = sanitized;
+            setStatusMessage(`Applied /${instruction.commandName} and saved.`);
+         } catch {
+            setStatusMessage(`Applied /${instruction.commandName} locally. Save failed.`);
+         }
 
-		const parsed = parseSlashCommands(trimmed);
-		if (!parsed.commands.length) {
-			return null;
-		}
+         setInteractionDraft("");
+         return;
+      }
 
-		return `Slash commands queued: ${parsed.commands.join(", ")}`;
-	}, [prompt]);
+      const hasUnsavedNoteEdits = noteContentRef.current !== lastAcknowledgedContentRef.current;
+      if (hasUnsavedNoteEdits) {
+         try {
+            await onSaveNoteContent({
+               noteId,
+               title,
+               content: noteContentRef.current,
+            });
+            lastAcknowledgedContentRef.current = noteContentRef.current;
+            setPendingRemoteUpdate(null);
+         } catch {
+            setStatusMessage("Save failed. Keep editing and try again.");
+            return;
+         }
+      }
 
-	return (
-		<div className="grid gap-4 md:grid-cols-2">
-			<section className="space-y-2">
-				<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
-					Current note
-				</p>
-				{pendingRemoteUpdate ? (
-					<div className="border-border bg-card space-y-2 border px-3 py-2 text-xs">
-						<p className="text-muted-foreground">{statusMessage ?? "Remote update waiting."}</p>
-						<div className="flex flex-wrap gap-2">
-							<Button variant="outline" size="sm" onClick={applyPendingUpdate}>
-								Apply update
-							</Button>
-							<Button variant="ghost" size="sm" onClick={keepLocalEdits}>
-								Keep local edits
-							</Button>
-						</div>
-					</div>
-				) : statusMessage ? (
-					<p className="text-muted-foreground text-xs">{statusMessage}</p>
-				) : null}
-				<textarea
-					value={noteContent}
-					onChange={(event) => {
-						setNoteContent(event.target.value);
-					}}
-					className="border-border bg-background min-h-90 w-full rounded-none border p-3 text-sm leading-relaxed"
-				/>
-				<div className="border-border bg-card min-h-30 border p-3 text-sm leading-relaxed">
-					{noteContent.trim().length > 0
-						? renderWikiLinkedText(noteContent)
-						: "No note content yet."}
-				</div>
-				<p className="text-muted-foreground text-xs">
-					Slash commands are routed to the agent and removed from the note surface. Wiki links like
-					[[Project X]] open the collections search.
-				</p>
-			</section>
+      const baselineContent = noteContentRef.current;
+      let streamedContent = "";
+      let sawStreamingUpdate = false;
 
-			<section className="space-y-2">
-				<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
-					Streaming output
-				</p>
-				<div className="border-border bg-card min-h-90 overflow-y-auto rounded-none border p-3 text-sm leading-relaxed">
-					{latestAssistantText.length > 0
-						? renderWikiLinkedText(latestAssistantText)
-						: "Waiting for the first rewrite..."}
-				</div>
-			</section>
+      try {
+         await onCapture(
+            {
+               noteId,
+               userInput: instruction.raw,
+            },
+            {
+               onRewriteProgress: (update) => {
+                  sawStreamingUpdate = true;
+                  streamedContent =
+                     update.mode === "replace" ? update.text : `${streamedContent}${update.text}`;
+                  const sanitized = stripSlashCommandLines(streamedContent).trim();
+                  setNoteContent(sanitized);
+                  noteContentRef.current = sanitized;
+                  setPendingRemoteUpdate(null);
+                  setStatusMessage("Rewriting...");
+               },
+            },
+         );
+      } catch {
+         if (sawStreamingUpdate) {
+            setNoteContent(baselineContent);
+            noteContentRef.current = baselineContent;
+         }
 
-			<section className="space-y-2 md:col-span-2">
-				<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
-					Interaction
-				</p>
-				<div className="flex flex-col gap-2 sm:flex-row">
-					<Input
-						className="w-full"
-						value={prompt}
-						aria-label="Rewrite prompt"
-						onChange={(event: ChangeEvent<HTMLInputElement>) => {
-							setPrompt(event.target.value);
-						}}
-						onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-							if (event.key === "Enter") {
-								event.preventDefault();
-								void submitPrompt();
-							}
-						}}
-						placeholder="Ask RewriteAgent to reshape this note"
-					/>
-					<Button onClick={() => void submitPrompt()} disabled={status === "streaming"}>
-						{status === "streaming" ? "Rewriting..." : "Go"}
-					</Button>
-				</div>
-				{promptHint ? <p className="text-muted-foreground text-xs">{promptHint}</p> : null}
-			</section>
-		</div>
-	);
+         setStatusMessage("Save failed. Keep editing and try again.");
+         return;
+      }
+
+      setInteractionDraft("");
+      setStatusMessage("Saved.");
+   };
+
+   const interactionHint = useMemo(() => {
+      const instruction = classifySlashInstruction(interactionDraft);
+      switch (instruction.kind) {
+         case "editor":
+            return `/${instruction.commandName} formats the note directly and is not saved as text.`;
+         case "agent":
+            return `/${instruction.commandName} is sent to the agent and does not appear in the note body.`;
+         case "freeform":
+            return "Unknown slash command will be sent to the agent as a freeform instruction.";
+         default:
+            return null;
+      }
+   }, [interactionDraft]);
+
+   return (
+      <div className="space-y-4">
+         <section className="space-y-2">
+            <p className="text-kumo-subtle text-xs font-medium tracking-[0.2em] uppercase">Note</p>
+            <p className="text-kumo-strong font-serif text-lg leading-tight">{title}</p>
+
+            {pendingRemoteUpdate ? (
+               <div className="bg-kumo-tint space-y-2 rounded-md px-3 py-2 text-xs">
+                  <p className="text-kumo-default">{statusMessage ?? "A rewrite is ready."}</p>
+                  <div className="flex flex-wrap gap-2">
+                     <Button variant="outline" size="sm" onClick={applyPendingUpdate}>
+                        Apply rewrite
+                     </Button>
+                     <Button variant="ghost" size="sm" onClick={dismissPendingUpdate}>
+                        Dismiss rewrite
+                     </Button>
+                  </div>
+               </div>
+            ) : statusMessage ? (
+               <p className="text-kumo-subtle text-xs">{statusMessage}</p>
+            ) : null}
+
+            {isEditingNote ? (
+               <TextAreaField
+                  label="Note content"
+                  tone="document"
+                  ref={noteTextareaRef}
+                  className="min-h-30 resize-none overflow-hidden"
+                  rows={1}
+                  value={noteContent}
+                  onChange={(event) => {
+                     onEditorInput();
+                     setNoteContent(event.target.value);
+                     noteContentRef.current = event.target.value;
+                  }}
+                  onBlur={() => {
+                     setIsEditingNote(false);
+                  }}
+                  onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
+                     if (event.nativeEvent.isComposing) {
+                        return;
+                     }
+
+                     if (event.key === "Escape") {
+                        event.preventDefault();
+                        setIsEditingNote(false);
+                     }
+                  }}
+                  placeholder="Write your note"
+               />
+            ) : (
+               <div
+                  className="bg-kumo-base min-h-30 cursor-text rounded-md p-4 font-serif text-[15px] leading-7"
+                  onClick={(event) => {
+                     if ((event.target as HTMLElement).closest("a")) {
+                        return;
+                     }
+                     onEditorInput();
+                     setIsEditingNote(true);
+                  }}
+               >
+                  {noteContent.trim().length > 0
+                     ? renderWikiLinkedText(noteContent)
+                     : "No note content yet."}
+               </div>
+            )}
+            <p className="text-kumo-subtle text-xs">
+               {isEditingNote
+                  ? "Editing note. Press Esc or click outside to return to read mode."
+                  : "Click the note body to edit. Wiki links like [[Project X]] stay clickable and open collections search."}
+            </p>
+         </section>
+
+         <section className="space-y-2">
+            <p className="text-kumo-subtle text-xs font-medium tracking-[0.2em] uppercase">
+               Interaction
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+               <TextAreaField
+                  label="Interaction input"
+                  tone="command"
+                  ref={interactionInputRef}
+                  value={interactionDraft}
+                  onChange={(event) => {
+                     onEditorInput();
+                     setInteractionDraft(event.target.value);
+                  }}
+                  onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
+                     if (event.nativeEvent.isComposing) {
+                        return;
+                     }
+                     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                        event.preventDefault();
+                        void submitInteraction();
+                     }
+                  }}
+                  placeholder="Describe what to change, or use /heading, /code, /ask, /research, /link, /summarize"
+               />
+               <Button onClick={() => void submitInteraction()} disabled={isCapturing}>
+                  {isCapturing ? "Saving..." : "Save"}
+               </Button>
+            </div>
+
+            <p className="text-kumo-subtle text-xs">Press Cmd+Enter to Save.</p>
+            {interactionHint ? <p className="text-kumo-subtle text-xs">{interactionHint}</p> : null}
+         </section>
+      </div>
+   );
 }

@@ -1,6 +1,6 @@
 import { useForm } from "@tanstack/react-form";
 import { useNavigate } from "@tanstack/react-router";
-import { Button, Input } from "@cloudflare/kumo";
+import { Button, Input, Surface } from "@cloudflare/kumo";
 import type { ChangeEvent } from "react";
 import z from "zod";
 
@@ -55,7 +55,7 @@ export default function SignUpForm({ onSwitchToSignIn }: { onSwitchToSignIn: () 
 	}
 
 	return (
-		<div className="mx-auto mt-10 w-full max-w-md p-6">
+		<Surface className="mx-auto mt-10 w-full max-w-md p-6">
 			<h1 className="mb-6 text-center text-3xl font-semibold">Create Account</h1>
 
 			<form
@@ -172,6 +172,6 @@ export default function SignUpForm({ onSwitchToSignIn }: { onSwitchToSignIn: () 
 					Already have an account? Sign In
 				</Button>
 			</div>
-		</div>
+		</Surface>
 	);
 }

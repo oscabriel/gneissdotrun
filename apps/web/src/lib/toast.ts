@@ -25,11 +25,7 @@ export function bindToastManager(nextManager: ToastManagerLike | null) {
 	manager = nextManager;
 }
 
-function notify(
-	variant: "default" | "error" | "warning",
-	title: string,
-	options?: ToastOptions,
-) {
+function notify(variant: "default" | "error" | "warning", title: string, options?: ToastOptions) {
 	if (!manager) {
 		return;
 	}
