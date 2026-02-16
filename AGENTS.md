@@ -7,7 +7,9 @@
 
 # Learnings
 
-Whenever you learn something new that feels contradictory or that you didn't expect, add it to the list below for future reference.
+Whenever you learn something new that you are asked to remember, that feels contradictory, or that you didn't expect, add it to the list below for future reference.
 
 - In `cloudflare/agents`, `routeAgentRequest()` may not handle plain HTTP requests to `/agents/*` unless they are WebSocket upgrades (tests indicate non-upgrade requests fall through). Plan server routing accordingly.
 - In this repo, `bun --filter <workspace> run <script>` may not match workspace names reliably; prefer `bunx turbo -F <workspace> <script>` for build/typecheck commands.
+- In `apps/web`, use kebab-case for component filenames (for example, `app-shell.tsx`) and PascalCase for component names inside those files.
+- Running `bun test` against modules that import `agents` may fail in local Bun runtime due unresolved `cloudflare:email`; in tests, mock `agents`/`agents/workflows` before dynamically importing those modules.
