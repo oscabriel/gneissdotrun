@@ -7,14 +7,14 @@ import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
 import { onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
-import { getAgentByName, routeAgentRequest } from "agents";
+import { getAgentByName } from "agents";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { validator } from "hono/validator";
-import { agentsMiddleware } from "hono-agents";
 import z from "zod";
 
+import { registerAgentRoutes } from "./agents-routing";
 import { executeCapture, toCaptureErrorEnvelope } from "./capture";
 import {
 	createNoteHistoryEvent,
@@ -252,7 +252,7 @@ app.use(
 	"/*",
 	cors({
 		origin: env.CORS_ORIGIN,
-		allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
+		allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 		allowHeaders: ["Content-Type", "Authorization"],
 		credentials: true,
 	}),
@@ -262,27 +262,7 @@ app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.use("/api/capture", captureRateLimit);
 app.use("/api/surfacing/query", queryRateLimit);
 app.use("/api/uploads", uploadRateLimit);
-
-app.use(
-	"/agents/*",
-	agentsMiddleware({
-		options: {
-			prefix: "agents",
-		},
-	}),
-);
-
-app.all("/agents/*", async (c) => {
-	const response = await routeAgentRequest(c.req.raw, c.env, {
-		prefix: "agents",
-	});
-
-	if (response) {
-		return response;
-	}
-
-	return c.json({ error: "Agent route not found" }, 404);
-});
+registerAgentRoutes(app);
 
 app.get("/api/notes", async (c) => {
 	const user = await getSessionUser(c.req.raw);
@@ -679,6 +659,107 @@ app.put("/api/notes/:noteId", noteIdParamValidator, updateNoteValidator, async (
 			title,
 			content: input.content,
 			tags,
+			updatedAt: now,
+		},
+	});
+});
+
+app.delete("/api/notes/:noteId", noteIdParamValidator, async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const { noteId } = c.req.valid("param");
+	const existing = await c.env.DB.prepare(
+		"SELECT id FROM notes WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL",
+	)
+		.bind(noteId, user.id)
+		.first<{ id: string }>();
+
+	if (!existing) {
+		return c.json({ error: "Note not found" }, 404);
+	}
+
+	const now = Date.now();
+	await c.env.DB.prepare(
+		"UPDATE notes SET deleted_at = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4 AND deleted_at IS NULL",
+	)
+		.bind(now, now, noteId, user.id)
+		.run();
+
+	try {
+		const indexAgent = await getAgentByName<Env, IndexAgent>(c.env.INDEX_AGENT, user.id);
+		await indexAgent.fetch("https://index-agent/internal", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				action: "remove",
+				noteId,
+			}),
+		});
+	} catch (error) {
+		console.error("Failed to notify index agent for note delete", error);
+	}
+
+	return c.json({
+		noteId,
+		deletedAt: now,
+	});
+});
+
+app.post("/api/notes/:noteId/restore", noteIdParamValidator, async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const { noteId } = c.req.valid("param");
+	const existing = await c.env.DB.prepare(
+		"SELECT id, title, summary, updated_at FROM notes WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NOT NULL",
+	)
+		.bind(noteId, user.id)
+		.first<{ id: string; title: string; summary: string; updated_at: number }>();
+
+	if (!existing) {
+		return c.json({ error: "Archived note not found" }, 404);
+	}
+
+	const now = Date.now();
+	await c.env.DB.prepare(
+		"UPDATE notes SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2 AND user_id = ?3 AND deleted_at IS NOT NULL",
+	)
+		.bind(now, noteId, user.id)
+		.run();
+
+	try {
+		const indexAgent = await getAgentByName<Env, IndexAgent>(c.env.INDEX_AGENT, user.id);
+		await indexAgent.fetch("https://index-agent/internal", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				action: "upsert",
+				note: {
+					id: noteId,
+					title: existing.title,
+					summary: existing.summary,
+					updatedAt: now,
+				},
+			}),
+		});
+	} catch (error) {
+		console.error("Failed to notify index agent for note restore", error);
+	}
+
+	return c.json({
+		note: {
+			id: noteId,
+			title: existing.title,
+			summary: existing.summary,
 			updatedAt: now,
 		},
 	});

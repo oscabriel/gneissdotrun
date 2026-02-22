@@ -8,8 +8,10 @@ interface GenerateRewriteTextInput {
 	noteContent: string;
 	userInput: string;
 	routing: RoutingDecision;
+	wikiLinkCandidates?: Array<{ id: string; title: string }>;
 	temperature?: number;
 	onDelta?: (delta: string) => Promise<void> | void;
+	abortSignal?: AbortSignal;
 }
 
 interface GenerateRewriteTextResult {
@@ -44,6 +46,7 @@ export async function generateRewriteText(
 		noteContent: input.noteContent,
 		userInput: input.userInput,
 		routing: input.routing,
+		wikiLinkCandidates: input.wikiLinkCandidates,
 	});
 	const apiKey = resolveGoogleApiKey();
 	if (!apiKey) {
@@ -57,6 +60,7 @@ export async function generateRewriteText(
 		model: google(DEFAULT_REWRITE_MODEL),
 		prompt,
 		temperature: input.temperature,
+		abortSignal: input.abortSignal,
 	});
 
 	let text = "";

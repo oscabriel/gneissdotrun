@@ -1,14 +1,23 @@
-import { AIChatAgent } from "@cloudflare/ai-chat";
-import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
+import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
+import {
+	createUIMessageStream,
+	createUIMessageStreamResponse,
+	type StreamTextOnFinishCallback,
+	type ToolSet,
+} from "ai";
 
 import {
-	createId,
 	generateRewriteText,
 	getLatestUserInput,
 	notifyIndexAgent,
 	persistNoteAndNotify,
 	splitIntoChunks,
 } from "./shared";
+import {
+	createRewriteRequestId,
+	createRewriteRoutingEventId,
+	createRewriteStatusPayload,
+} from "./rewrite-stream";
 import type { AgentEnv, RewriteAgentState, RoutingDecision } from "./shared";
 
 const DEFAULT_ROUTING: RoutingDecision = {
@@ -18,6 +27,24 @@ const DEFAULT_ROUTING: RoutingDecision = {
 	tags: [],
 	target: "rewrite-agent",
 };
+
+interface RewriteRoutingData {
+	eventId: string;
+	requestId: string;
+	prompt: string;
+	routing: RoutingDecision;
+	emittedAt: number;
+}
+
+interface RewriteStatusData {
+	eventId: string;
+	requestId: string;
+	status: "started" | "persisted" | "skipped";
+	noteId: string;
+	routeKind: RoutingDecision["kind"];
+	hint: string;
+	emittedAt: number;
+}
 
 export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 	initialState: RewriteAgentState = {
@@ -29,20 +56,43 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 		updatedAt: Date.now(),
 	};
 
-	async onChatMessage() {
+	async onChatMessage(
+		_onFinish: StreamTextOnFinishCallback<ToolSet>,
+		options?: OnChatMessageOptions,
+	) {
 		const latestUserInput = getLatestUserInput(this.messages);
 		const routing = this.state.routingContext ?? DEFAULT_ROUTING;
 		const routingPayload = {
 			kind: routing.kind,
 			reason: routing.reason,
 		};
+		const requestId = createRewriteRequestId({
+			noteId: this.state.noteId,
+			userInput: latestUserInput,
+			messageCount: this.messages.length,
+		});
 		const noteContent = this.state.noteContent.trim().length
 			? this.state.noteContent
 			: "(empty note)";
 
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
-				const id = createId("rewrite");
+				const id = `${requestId}-text`;
+				const noteId = this.state.noteId || "";
+
+				const startedPayload: RewriteStatusData = createRewriteStatusPayload({
+					requestId,
+					status: "started",
+					noteId,
+					routeKind: routing.kind,
+				});
+
+				writer.write({
+					type: "data-rewrite-status",
+					data: startedPayload,
+					transient: true,
+				});
+
 				writer.write({
 					type: "text-start",
 					id,
@@ -52,6 +102,7 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 					noteContent,
 					userInput: latestUserInput,
 					routing,
+					abortSignal: options?.abortSignal,
 					onDelta: async (delta) => {
 						for (const chunk of splitIntoChunks(delta)) {
 							writer.write({
@@ -64,6 +115,7 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 				});
 
 				const trimmed = text.trim();
+				const persisted = trimmed.length > 0;
 				if (trimmed.length > 0) {
 					await this.persistRewrite(trimmed, routing, routingPayload);
 				}
@@ -73,12 +125,30 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 					id,
 				});
 
+				const routingData: RewriteRoutingData = {
+					eventId: createRewriteRoutingEventId(requestId),
+					requestId,
+					prompt,
+					routing,
+					emittedAt: Date.now(),
+				};
+
 				writer.write({
 					type: "data-routing",
-					data: {
-						prompt,
-						routing,
-					},
+					data: routingData,
+					transient: true,
+				});
+
+				const completionPayload: RewriteStatusData = createRewriteStatusPayload({
+					requestId,
+					status: persisted ? "persisted" : "skipped",
+					noteId,
+					routeKind: routing.kind,
+				});
+
+				writer.write({
+					type: "data-rewrite-status",
+					data: completionPayload,
 					transient: true,
 				});
 			},

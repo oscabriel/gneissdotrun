@@ -3,7 +3,7 @@ import { Agent, callable } from "agents";
 import { embed, generateText, Output } from "ai";
 import z from "zod";
 
-import type { AgentEnv } from "./shared";
+import { type AgentEnv, RetryableAgentError, shouldRetryTransientError } from "./shared";
 
 interface SurfacingDigest {
 	title: string;
@@ -58,6 +58,28 @@ interface FactRow {
 
 const SURFACING_MODEL = "gemini-2.5-flash";
 const SURFACING_MODEL_FALLBACK = "gemini-2.0-flash";
+const SURFACING_AGENT_NAME = "SurfacingAgent";
+const WEEKLY_DIGEST_CRON = "0 8 * * 1";
+const DIGEST_SCHEDULE_RETRY = {
+	maxAttempts: 4,
+	baseDelayMs: 250,
+	maxDelayMs: 4000,
+} as const;
+const LLM_RETRY = {
+	maxAttempts: 3,
+	baseDelayMs: 250,
+	maxDelayMs: 2500,
+} as const;
+const EMBEDDING_RETRY = {
+	maxAttempts: 3,
+	baseDelayMs: 200,
+	maxDelayMs: 2000,
+} as const;
+const VECTOR_QUERY_RETRY = {
+	maxAttempts: 3,
+	baseDelayMs: 200,
+	maxDelayMs: 2000,
+} as const;
 const collectionIdSchema = z
 	.string()
 	.trim()
@@ -99,43 +121,122 @@ function trim(value: string, maxLength = 2400): string {
 	return value.length <= maxLength ? value : `${value.slice(0, maxLength)}...`;
 }
 
-async function generateStructuredWithFallback(input: {
-	schema: z.ZodTypeAny;
-	prompt: string;
-	temperature: number;
-	task: string;
-}): Promise<unknown> {
-	try {
-		const { output } = await generateText({
-			model: google(SURFACING_MODEL),
-			output: Output.object({ schema: input.schema }),
-			prompt: input.prompt,
-			temperature: input.temperature,
-		});
-
-		return output as unknown;
-	} catch (primaryError) {
-		console.error(`SurfacingAgent ${input.task} failed on primary model`, primaryError);
-
-		const { output } = await generateText({
-			model: google(SURFACING_MODEL_FALLBACK),
-			output: Output.object({ schema: input.schema }),
-			prompt: input.prompt,
-			temperature: input.temperature,
-		});
-
-		return output as unknown;
-	}
-}
-
 export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
+	static options = {
+		retry: {
+			maxAttempts: 4,
+			baseDelayMs: 200,
+			maxDelayMs: 3500,
+		},
+	};
+
 	initialState: SurfacingAgentState = {
 		latestDigest: null,
 		updatedAt: Date.now(),
 	};
 
 	async onStart() {
-		this.schedule("0 8 * * 1", "generateWeeklyDigest");
+		const hasDigestSchedule = this.getSchedules({ type: "cron" }).some(
+			(schedule) => "cron" in schedule && schedule.cron === WEEKLY_DIGEST_CRON,
+		);
+
+		if (!hasDigestSchedule) {
+			await this.schedule(WEEKLY_DIGEST_CRON, "generateWeeklyDigest", undefined, {
+				retry: DIGEST_SCHEDULE_RETRY,
+			});
+		}
+	}
+
+	private shouldRetryTransient(
+		error: unknown,
+		nextAttempt: number,
+		context: {
+			routeKind: string;
+			maxAttempts: number;
+			noteId?: string;
+		},
+	): boolean {
+		const retryable = shouldRetryTransientError(error);
+		if (!retryable) {
+			return false;
+		}
+
+		console.warn("agent.retry", {
+			agentName: SURFACING_AGENT_NAME,
+			workflowId: null,
+			routeKind: context.routeKind,
+			noteId: context.noteId,
+			attempt: Math.max(1, nextAttempt - 1),
+			nextAttempt,
+			maxAttempts: context.maxAttempts,
+			error,
+		});
+
+		return true;
+	}
+
+	private logRetryExhausted(context: {
+		routeKind: string;
+		maxAttempts: number;
+		noteId?: string | null;
+		error: unknown;
+	}): void {
+		console.error("agent.retry.exhausted", {
+			agentName: SURFACING_AGENT_NAME,
+			workflowId: null,
+			routeKind: context.routeKind,
+			noteId: context.noteId ?? null,
+			maxAttempts: context.maxAttempts,
+			error: context.error,
+		});
+	}
+
+	private async generateStructuredWithFallback(input: {
+		schema: z.ZodTypeAny;
+		prompt: string;
+		temperature: number;
+		task: string;
+		routeKind: string;
+	}): Promise<unknown> {
+		const maxAttempts = LLM_RETRY.maxAttempts;
+
+		const runModel = async (model: string) =>
+			this.retry(
+				async () => {
+					const { output } = await generateText({
+						model: google(model),
+						output: Output.object({ schema: input.schema }),
+						prompt: input.prompt,
+						temperature: input.temperature,
+					});
+
+					return output as unknown;
+				},
+				{
+					maxAttempts,
+					baseDelayMs: LLM_RETRY.baseDelayMs,
+					maxDelayMs: LLM_RETRY.maxDelayMs,
+					shouldRetry: (error, nextAttempt) =>
+						this.shouldRetryTransient(error, nextAttempt, {
+							routeKind: input.routeKind,
+							maxAttempts,
+						}),
+				},
+			);
+
+		try {
+			return await runModel(SURFACING_MODEL);
+		} catch (primaryError) {
+			console.error(`SurfacingAgent ${input.task} failed on primary model`, {
+				agentName: SURFACING_AGENT_NAME,
+				workflowId: null,
+				routeKind: input.routeKind,
+				noteId: null,
+				error: primaryError,
+			});
+
+			return runModel(SURFACING_MODEL_FALLBACK);
+		}
 	}
 
 	private emptyDigest(rangeStart: number, rangeEnd: number): SurfacingDigest {
@@ -164,28 +265,73 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 		const noteIds = new Set((byKeyword.results ?? []).map((row) => row.id));
 
 		try {
-			const { embedding } = await embed({
-				model: google.embedding("gemini-embedding-001"),
-				value: question,
-				providerOptions: {
-					google: {
-						outputDimensionality: 768,
-						taskType: "RETRIEVAL_QUERY",
-					},
+			const embeddingMaxAttempts = EMBEDDING_RETRY.maxAttempts;
+			const { embedding } = await this.retry(
+				async () =>
+					embed({
+						model: google.embedding("gemini-embedding-001"),
+						value: question,
+						providerOptions: {
+							google: {
+								outputDimensionality: 768,
+								taskType: "RETRIEVAL_QUERY",
+							},
+						},
+					}),
+				{
+					maxAttempts: embeddingMaxAttempts,
+					baseDelayMs: EMBEDDING_RETRY.baseDelayMs,
+					maxDelayMs: EMBEDDING_RETRY.maxDelayMs,
+					shouldRetry: (error, nextAttempt) =>
+						this.shouldRetryTransient(error, nextAttempt, {
+							routeKind: "query_embedding",
+							maxAttempts: embeddingMaxAttempts,
+						}),
 				},
-			});
+			);
 
-			const vectorResults = await this.env.VECTORIZE.query(embedding, { topK: 8 });
+			const vectorMaxAttempts = VECTOR_QUERY_RETRY.maxAttempts;
+			const vectorResults = await this.retry(
+				async () => {
+					const response = await this.env.VECTORIZE.query(embedding, { topK: 8 });
+					const hasResults = Array.isArray(response.matches);
+					if (!hasResults) {
+						throw new RetryableAgentError("Vector query returned invalid payload");
+					}
+
+					return response;
+				},
+				{
+					maxAttempts: vectorMaxAttempts,
+					baseDelayMs: VECTOR_QUERY_RETRY.baseDelayMs,
+					maxDelayMs: VECTOR_QUERY_RETRY.maxDelayMs,
+					shouldRetry: (error, nextAttempt) =>
+						this.shouldRetryTransient(error, nextAttempt, {
+							routeKind: "query_vector_search",
+							maxAttempts: vectorMaxAttempts,
+						}),
+				},
+			);
+
 			for (const match of vectorResults.matches) {
 				if (match.id) {
 					noteIds.add(match.id);
 				}
 			}
 		} catch (error) {
-			console.error(
-				"SurfacingAgent vector retrieval failed; falling back to keyword search",
+			this.logRetryExhausted({
+				routeKind: "query_retrieval",
+				maxAttempts: Math.max(EMBEDDING_RETRY.maxAttempts, VECTOR_QUERY_RETRY.maxAttempts),
+				noteId: null,
 				error,
-			);
+			});
+			console.error("SurfacingAgent vector retrieval failed; falling back to keyword search", {
+				agentName: SURFACING_AGENT_NAME,
+				workflowId: null,
+				routeKind: "query_retrieval",
+				noteId: null,
+				error,
+			});
 		}
 
 		if (noteIds.size === 0) {
@@ -324,11 +470,12 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 
 		let synthesis: z.infer<typeof querySynthesisSchema>;
 		try {
-			synthesis = (await generateStructuredWithFallback({
+			synthesis = (await this.generateStructuredWithFallback({
 				schema: querySynthesisSchema,
 				prompt,
 				temperature: 0.15,
 				task: "query synthesis",
+				routeKind: "query_synthesis",
 			})) as z.infer<typeof querySynthesisSchema>;
 		} catch (error) {
 			console.error("SurfacingAgent query synthesis failed", error);
@@ -371,6 +518,13 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 
 	@callable()
 	async generateWeeklyDigest(): Promise<SurfacingDigest> {
+		console.info("agent.schedule.execution", {
+			agentName: SURFACING_AGENT_NAME,
+			workflowId: null,
+			routeKind: "weekly_digest",
+			noteId: null,
+		});
+
 		const rangeEnd = Date.now();
 		const rangeStart = rangeEnd - 7 * 24 * 60 * 60 * 1000;
 
@@ -418,11 +572,12 @@ export class SurfacingAgent extends Agent<AgentEnv, SurfacingAgentState> {
 
 		let digestParts: z.infer<typeof digestSchema>;
 		try {
-			digestParts = (await generateStructuredWithFallback({
+			digestParts = (await this.generateStructuredWithFallback({
 				schema: digestSchema,
 				prompt,
 				temperature: 0.2,
 				task: "digest synthesis",
+				routeKind: "digest_synthesis",
 			})) as z.infer<typeof digestSchema>;
 		} catch (error) {
 			console.error("SurfacingAgent digest generation failed", error);

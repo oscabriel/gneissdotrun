@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`gneissdotrun` is a Cloudflare monorepo managed with `bun` workspaces and `turbo`.
+`gneissdotrun` is a monorepo managed with `bun` workspaces and `turbo`.
 
 - Repo checks: `bun run check`, `bun run typecheck`, `bun run build`.
 - Extra guidance: `docs/agents/standards.md`, `docs/agents/workspaces.md`.
@@ -13,3 +13,4 @@ Whenever you learn something new that you are asked to remember, that feels cont
 - In this repo, `bun --filter <workspace> run <script>` may not match workspace names reliably; prefer `bunx turbo -F <workspace> <script>` for build/typecheck commands.
 - In `apps/web`, use kebab-case for component filenames (for example, `app-shell.tsx`) and PascalCase for component names inside those files.
 - Running `bun test` against modules that import `agents` may fail in local Bun runtime due unresolved `cloudflare:email`; in tests, mock `agents`/`agents/workflows` before dynamically importing those modules.
+- In `apps/server`, keep `/agents/*` on a single `routeAgentRequest` code path with explicit `404` fallback for non-upgrade HTTP; CORS preflight still succeeds via the global `cors` middleware.

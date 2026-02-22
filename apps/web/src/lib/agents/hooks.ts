@@ -1,7 +1,15 @@
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 import { useAgent } from "agents/react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { agentClientConfig, agentNamespaces } from "./client";
+import {
+	consumeTransientDataChunk,
+	type RewriteRoutingDataPart,
+	type RewriteStatusDataPart,
+} from "./data-parts";
+
+export type { RewriteRoutingDataPart, RewriteStatusDataPart } from "./data-parts";
 
 export interface RewriteRoutingContext {
 	kind:
@@ -68,6 +76,11 @@ interface UseRewriteAgentOptions {
 	onStateUpdate?: (state: RewriteAgentState) => void;
 }
 
+interface UseRewriteAgentChatOptions extends UseRewriteAgentOptions {
+	onRoutingData?: (payload: RewriteRoutingDataPart) => void;
+	onStatusData?: (payload: RewriteStatusDataPart) => void;
+}
+
 export function useRewriteAgent({ noteId, onStateUpdate }: UseRewriteAgentOptions) {
 	return useAgent<RewriteAgentState>({
 		agent: agentNamespaces.rewrite,
@@ -77,11 +90,35 @@ export function useRewriteAgent({ noteId, onStateUpdate }: UseRewriteAgentOption
 	});
 }
 
-export function useRewriteAgentChat(options: UseRewriteAgentOptions) {
+export function useRewriteAgentChat(options: UseRewriteAgentChatOptions) {
 	const agent = useRewriteAgent(options);
+	const seenTransientEventsRef = useRef<Set<string>>(new Set());
+
+	useEffect(() => {
+		seenTransientEventsRef.current.clear();
+	}, [options.noteId]);
+
+	const handleData = useCallback(
+		(chunk: unknown) => {
+			const parsed = consumeTransientDataChunk(seenTransientEventsRef.current, chunk);
+			if (!parsed) {
+				return;
+			}
+
+			if (parsed.kind === "routing") {
+				options.onRoutingData?.(parsed.payload);
+				return;
+			}
+
+			options.onStatusData?.(parsed.payload);
+		},
+		[options],
+	);
+
 	const chat = useAgentChat<RewriteAgentState>({
 		agent,
 		credentials: "include",
+		onData: handleData,
 	});
 
 	return {

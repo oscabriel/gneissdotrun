@@ -1,6 +1,12 @@
 import { Agent, callable } from "agents";
 
-import type { OrganizationAgentState, RoutingDecision } from "./shared";
+import {
+	isRetryableHttpStatus,
+	RetryableAgentError,
+	type OrganizationAgentState,
+	type RoutingDecision,
+	shouldRetryTransientError,
+} from "./shared";
 
 interface OrganizeParams {
 	noteIds?: string[];
@@ -20,6 +26,24 @@ interface RoutingContextPayload {
 const COLLECTION_STATUSES = ["active", "resolved", "archived"] as const;
 
 type CollectionStatus = (typeof COLLECTION_STATUSES)[number];
+
+const ORGANIZATION_AGENT_NAME = "OrganizationAgent";
+const HEARTBEAT_CRON = "0 */6 * * *";
+const HEARTBEAT_RETRY = {
+	maxAttempts: 4,
+	baseDelayMs: 250,
+	maxDelayMs: 4000,
+} as const;
+const INDEX_SYNC_RETRY = {
+	maxAttempts: 3,
+	baseDelayMs: 250,
+	maxDelayMs: 3000,
+} as const;
+const WORKFLOW_START_RETRY = {
+	maxAttempts: 3,
+	baseDelayMs: 200,
+	maxDelayMs: 2500,
+} as const;
 
 interface CollectionRow {
 	id: string;
@@ -50,6 +74,14 @@ interface CollectionLifecyclePayload {
 }
 
 export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
+	static options = {
+		retry: {
+			maxAttempts: 4,
+			baseDelayMs: 200,
+			maxDelayMs: 3500,
+		},
+	};
+
 	initialState: OrganizationAgentState = {
 		collections: [],
 		actionItems: [],
@@ -59,12 +91,67 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 	};
 
 	async onStart() {
-		this.schedule("0 */6 * * *", "heartbeat");
+		const hasHeartbeatSchedule = this.getSchedules({ type: "cron" }).some(
+			(schedule) => "cron" in schedule && schedule.cron === HEARTBEAT_CRON,
+		);
+
+		if (!hasHeartbeatSchedule) {
+			await this.schedule(HEARTBEAT_CRON, "heartbeat", undefined, {
+				retry: HEARTBEAT_RETRY,
+			});
+		}
+
 		try {
 			await this.refreshCollectionsState(false);
 		} catch (error) {
 			console.error("Failed to hydrate collections on start", error);
 		}
+	}
+
+	private shouldRetryTransient(
+		error: unknown,
+		nextAttempt: number,
+		context: {
+			routeKind: string;
+			maxAttempts: number;
+			workflowId?: string;
+			noteId?: string;
+		},
+	): boolean {
+		const retryable = shouldRetryTransientError(error);
+		if (!retryable) {
+			return false;
+		}
+
+		console.warn("agent.retry", {
+			agentName: ORGANIZATION_AGENT_NAME,
+			workflowId: context.workflowId,
+			routeKind: context.routeKind,
+			noteId: context.noteId,
+			attempt: Math.max(1, nextAttempt - 1),
+			nextAttempt,
+			maxAttempts: context.maxAttempts,
+			error,
+		});
+
+		return true;
+	}
+
+	private logRetryExhausted(context: {
+		routeKind: string;
+		maxAttempts: number;
+		workflowId?: string | null;
+		noteId?: string | null;
+		error: unknown;
+	}): void {
+		console.error("agent.retry.exhausted", {
+			agentName: ORGANIZATION_AGENT_NAME,
+			workflowId: context.workflowId ?? null,
+			routeKind: context.routeKind,
+			noteId: context.noteId ?? null,
+			maxAttempts: context.maxAttempts,
+			error: context.error,
+		});
 	}
 
 	private normalizeStatus(status: string): CollectionStatus {
@@ -117,16 +204,50 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 		const namespace = this.env.INDEX_AGENT as DurableObjectNamespace;
 		const indexAgentId = namespace.idFromName(this.name);
 		const indexAgent = namespace.get(indexAgentId);
-		await indexAgent.fetch("https://index-agent/internal", {
-			method: "POST",
-			headers: {
-				"content-type": "application/json",
-			},
-			body: JSON.stringify({
-				action: "collections",
-				collections,
-			}),
-		});
+		const maxAttempts = INDEX_SYNC_RETRY.maxAttempts;
+		try {
+			await this.retry(
+				async () => {
+					const response = await indexAgent.fetch("https://index-agent/internal", {
+						method: "POST",
+						headers: {
+							"content-type": "application/json",
+						},
+						body: JSON.stringify({
+							action: "collections",
+							collections,
+						}),
+					});
+
+					if (!response.ok) {
+						const message = `Index collections sync failed (${response.status})`;
+						if (isRetryableHttpStatus(response.status)) {
+							throw new RetryableAgentError(message, { status: response.status });
+						}
+
+						throw new Error(message);
+					}
+				},
+				{
+					maxAttempts,
+					baseDelayMs: INDEX_SYNC_RETRY.baseDelayMs,
+					maxDelayMs: INDEX_SYNC_RETRY.maxDelayMs,
+					shouldRetry: (error, nextAttempt) =>
+						this.shouldRetryTransient(error, nextAttempt, {
+							routeKind: "collections_sync",
+							maxAttempts,
+						}),
+				},
+			);
+		} catch (error) {
+			this.logRetryExhausted({
+				routeKind: "collections_sync",
+				maxAttempts,
+				noteId: null,
+				error,
+			});
+			throw error;
+		}
 	}
 
 	private async refreshCollectionsState(notifyIndex: boolean): Promise<CollectionListItem[]> {
@@ -170,18 +291,54 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 			return;
 		}
 
-		await this.runWorkflow("ORGANIZE_WORKFLOW", {
+		const workflowId = await this.runWorkflow("ORGANIZE_WORKFLOW", {
 			userId: this.name,
 			noteIds: pending.results.map((row) => row.id),
+		});
+
+		console.info("agent.schedule.execution", {
+			agentName: ORGANIZATION_AGENT_NAME,
+			workflowId,
+			routeKind: "heartbeat",
+			noteId: null,
+			queuedCount: pending.results.length,
 		});
 	}
 
 	@callable()
 	async runOrganizeWorkflow(params: OrganizeParams = {}) {
-		return this.runWorkflow("ORGANIZE_WORKFLOW", {
-			userId: this.name,
-			noteIds: params.noteIds ?? [],
-		});
+		const maxAttempts = WORKFLOW_START_RETRY.maxAttempts;
+		const noteIds = params.noteIds ?? [];
+
+		try {
+			return await this.retry(
+				async () =>
+					this.runWorkflow("ORGANIZE_WORKFLOW", {
+						userId: this.name,
+						noteIds,
+					}),
+				{
+					maxAttempts,
+					baseDelayMs: WORKFLOW_START_RETRY.baseDelayMs,
+					maxDelayMs: WORKFLOW_START_RETRY.maxDelayMs,
+					shouldRetry: (error, nextAttempt) =>
+						this.shouldRetryTransient(error, nextAttempt, {
+							routeKind: "run_organize",
+							maxAttempts,
+							noteId: noteIds[0],
+						}),
+				},
+			);
+		} catch (error) {
+			this.logRetryExhausted({
+				routeKind: "run_organize",
+				maxAttempts,
+				workflowId: null,
+				noteId: noteIds[0] ?? null,
+				error,
+			});
+			throw error;
+		}
 	}
 
 	@callable()
@@ -243,6 +400,13 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 	}
 
 	async onWorkflowProgress(workflowName: string, workflowId: string, progress: unknown) {
+		console.info("agent.workflow.progress", {
+			agentName: ORGANIZATION_AGENT_NAME,
+			workflowId,
+			routeKind: workflowName,
+			noteId: null,
+		});
+
 		this.setState({
 			...this.state,
 			updatedAt: Date.now(),
@@ -260,6 +424,13 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 	}
 
 	async onWorkflowComplete(workflowName: string, workflowId: string, result?: unknown) {
+		console.info("agent.workflow.complete", {
+			agentName: ORGANIZATION_AGENT_NAME,
+			workflowId,
+			routeKind: workflowName,
+			noteId: null,
+		});
+
 		this.setState({
 			...this.state,
 			lastRunAt: Date.now(),
@@ -274,6 +445,16 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 				result,
 			}),
 		);
+	}
+
+	async onWorkflowError(workflowName: string, workflowId: string, error: unknown) {
+		console.error("agent.workflow.error", {
+			agentName: ORGANIZATION_AGENT_NAME,
+			workflowId,
+			routeKind: workflowName,
+			noteId: null,
+			error,
+		});
 	}
 
 	@callable()
