@@ -9,3 +9,5 @@
 - `packages/db`: keep schema in `packages/db/src/schema`, re-export via `packages/db/src/schema/index.ts`, prefer generated migrations.
 - `packages/env`: keep centralized validation with split server/client modules; require `VITE_` for client-visible keys; avoid direct `process.env` in app code.
 - `packages/infra`: keep env loading/bindings explicit and resource naming deterministic; avoid destructive changes unless explicitly requested.
+- `agents` + `@cloudflare/ai-chat`: keep versions aligned across `apps/server` and `apps/web`; if installing `apps/web` in isolation, include `@ai-sdk/react` to satisfy ai-chat React peer requirements.
+- `apps/server` agent routing: `hono-agents` is not required once routes are centralized through `registerAgentRoutes(...)->routeAgentRequest(...)`; avoid reintroducing it unless middleware-specific behavior is explicitly needed.
