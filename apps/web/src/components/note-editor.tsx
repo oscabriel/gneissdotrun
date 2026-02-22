@@ -1,507 +1,518 @@
-import type { KeyboardEvent, ReactNode } from "react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@cloudflare/kumo";
+import { Button, DropdownMenu } from "@cloudflare/kumo";
+import type { KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 
 import { TextAreaField } from "@/components/text-area-field";
 
 interface RewriteProgressUpdate {
-   mode: "append" | "replace";
-   text: string;
+	mode: "append" | "replace";
+	text: string;
 }
 
 interface NoteEditorProps {
-   noteId: string;
-   title: string;
-   initialContent: string;
-   onCapture: (
-      input: { userInput: string; noteId?: string },
-      options?: {
-         onRewriteProgress?: (update: RewriteProgressUpdate) => void;
-      },
-   ) => Promise<void>;
-   onSaveNoteContent: (input: { noteId: string; content: string; title?: string }) => Promise<void>;
-   onEditorInput: () => void;
-   isCapturing: boolean;
-   prefillInteraction?: { value: string; nonce: number } | null;
+	noteId: string;
+	title: string;
+	initialContent: string;
+	onCapture: (
+		input: { userInput: string; noteId?: string },
+		options?: {
+			onRewriteProgress?: (update: RewriteProgressUpdate) => void;
+		},
+	) => Promise<void>;
+	onSaveNoteContent: (
+		input: { noteId: string; content: string; title?: string },
+		options?: { silent?: boolean },
+	) => Promise<void>;
+	onArchiveNote: (noteId: string) => Promise<void>;
+	onEditorInput: () => void;
+	isCapturing: boolean;
+	externalRunRequest?: { command: string; nonce: number } | null;
 }
 
 type SlashInstructionKind = "none" | "editor" | "agent" | "freeform";
 
 interface SlashInstruction {
-   kind: SlashInstructionKind;
-   commandName: string | null;
-   argument: string;
-   raw: string;
+	kind: SlashInstructionKind;
+	commandName: string | null;
+	argument: string;
+	raw: string;
 }
 
 const WIKI_LINK_PATTERN = /\[\[([^\]]+)\]\]/g;
+const SLASH_COMMAND_LINE_PATTERN = /^\s*\/[a-z-]+(?:\s+.*)?\s*$/i;
+const AUTOSAVE_DELAY_MS = 1000;
 
 const EDITOR_FORMATTING_COMMANDS = new Set(["heading", "code", "quote", "bullets"]);
 const AGENT_COMMANDS = new Set(["ask", "research", "link", "summarize"]);
 
+function extractSlashCommandLines(input: string): string[] {
+	return input
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => SLASH_COMMAND_LINE_PATTERN.test(line));
+}
+
 function stripSlashCommandLines(input: string): string {
-   const lines = input.split("\n");
-   const filtered = lines.filter((line) => !/^\s*\/[a-z-]+(?:\s+.*)?\s*$/i.test(line.trim()));
-   return filtered.join("\n").trimEnd();
+	const lines = input.split("\n");
+	const filtered = lines.filter((line) => !SLASH_COMMAND_LINE_PATTERN.test(line.trim()));
+	return filtered.join("\n").trimEnd();
 }
 
 function classifySlashInstruction(rawInput: string): SlashInstruction {
-   const raw = rawInput.trim();
-   if (!raw.startsWith("/")) {
-      return {
-         kind: "none",
-         commandName: null,
-         argument: raw,
-         raw,
-      };
-   }
+	const raw = rawInput.trim();
+	if (!raw.startsWith("/")) {
+		return {
+			kind: "none",
+			commandName: null,
+			argument: raw,
+			raw,
+		};
+	}
 
-   const match = raw.match(/^\/([a-z-]+)\s*(.*)$/i);
-   if (!match) {
-      return {
-         kind: "freeform",
-         commandName: null,
-         argument: "",
-         raw,
-      };
-   }
+	const match = raw.match(/^\/([a-z-]+)\s*(.*)$/i);
+	if (!match) {
+		return {
+			kind: "freeform",
+			commandName: null,
+			argument: "",
+			raw,
+		};
+	}
 
-   const commandName = (match[1] ?? "").toLowerCase();
-   const argument = (match[2] ?? "").trim();
+	const commandName = (match[1] ?? "").toLowerCase();
+	const argument = (match[2] ?? "").trim();
 
-   if (EDITOR_FORMATTING_COMMANDS.has(commandName)) {
-      return {
-         kind: "editor",
-         commandName,
-         argument,
-         raw,
-      };
-   }
+	if (EDITOR_FORMATTING_COMMANDS.has(commandName)) {
+		return {
+			kind: "editor",
+			commandName,
+			argument,
+			raw,
+		};
+	}
 
-   if (AGENT_COMMANDS.has(commandName)) {
-      return {
-         kind: "agent",
-         commandName,
-         argument,
-         raw,
-      };
-   }
+	if (AGENT_COMMANDS.has(commandName)) {
+		return {
+			kind: "agent",
+			commandName,
+			argument,
+			raw,
+		};
+	}
 
-   return {
-      kind: "freeform",
-      commandName,
-      argument,
-      raw,
-   };
+	return {
+		kind: "freeform",
+		commandName,
+		argument,
+		raw,
+	};
 }
 
 function appendBlock(current: string, block: string): string {
-   if (!current.trim()) {
-      return block;
-   }
+	if (!current.trim()) {
+		return block;
+	}
 
-   return `${current.trimEnd()}\n\n${block}`;
+	return `${current.trimEnd()}\n\n${block}`;
 }
 
 function applyEditorFormatting(current: string, commandName: string, argument: string): string {
-   switch (commandName) {
-      case "heading": {
-         const text = argument || "New heading";
-         return appendBlock(current, `# ${text}`);
-      }
-      case "code": {
-         const text = argument || "// Add code";
-         return appendBlock(current, `\`\`\`\n${text}\n\`\`\``);
-      }
-      case "quote": {
-         const text = argument || "Quote";
-         return appendBlock(current, `> ${text}`);
-      }
-      case "bullets": {
-         const lines = argument
-            ? argument
-               .split(";")
-               .map((line) => line.trim())
-               .filter(Boolean)
-            : ["List item"];
+	switch (commandName) {
+		case "heading": {
+			const text = argument || "New heading";
+			return appendBlock(current, `# ${text}`);
+		}
+		case "code": {
+			const text = argument || "// Add code";
+			return appendBlock(current, `\`\`\`\n${text}\n\`\`\``);
+		}
+		case "quote": {
+			const text = argument || "Quote";
+			return appendBlock(current, `> ${text}`);
+		}
+		case "bullets": {
+			const lines = argument
+				? argument
+						.split(";")
+						.map((line) => line.trim())
+						.filter(Boolean)
+				: ["List item"];
 
-         return appendBlock(current, lines.map((line) => `- ${line}`).join("\n"));
-      }
-      default:
-         return current;
-   }
+			return appendBlock(current, lines.map((line) => `- ${line}`).join("\n"));
+		}
+		default:
+			return current;
+	}
 }
 
-function renderWikiLinkedText(text: string): ReactNode {
-   const lines = text.split("\n");
+function toRenderableMarkdown(input: string): string {
+	return input.replace(WIKI_LINK_PATTERN, (_fullMatch, label: string) => {
+		const normalized = label.trim();
+		if (!normalized) {
+			return "";
+		}
 
-   return lines.map((line, lineIndex) => {
-      const parts: ReactNode[] = [];
-      let lastIndex = 0;
-      WIKI_LINK_PATTERN.lastIndex = 0;
-
-      for (const match of line.matchAll(WIKI_LINK_PATTERN)) {
-         const fullMatch = match[0];
-         const label = (match[1] ?? "").trim();
-         const matchIndex = match.index ?? 0;
-
-         if (matchIndex > lastIndex) {
-            parts.push(
-               <span key={`text-${lineIndex}-${lastIndex}`}>{line.slice(lastIndex, matchIndex)}</span>,
-            );
-         }
-
-         if (label.length > 0) {
-            parts.push(
-               <a
-                  key={`wiki-${lineIndex}-${matchIndex}`}
-                  href={`/collections?query=${encodeURIComponent(label)}`}
-                  className="text-kumo-link underline underline-offset-2"
-               >
-                  [[{label}]]
-               </a>,
-            );
-         } else {
-            parts.push(<span key={`empty-${lineIndex}-${matchIndex}`}>{fullMatch}</span>);
-         }
-
-         lastIndex = matchIndex + fullMatch.length;
-      }
-
-      if (lastIndex < line.length) {
-         parts.push(<span key={`tail-${lineIndex}`}>{line.slice(lastIndex)}</span>);
-      }
-
-      if (parts.length === 0) {
-         parts.push(<span key={`blank-${lineIndex}`}>&nbsp;</span>);
-      }
-
-      return <p key={`line-${lineIndex}`}>{parts}</p>;
-   });
+		return `[[${normalized}]](/collections?query=${encodeURIComponent(normalized)})`;
+	});
 }
 
 export function NoteEditor({
-   noteId,
-   title,
-   initialContent,
-   onCapture,
-   onSaveNoteContent,
-   onEditorInput,
-   isCapturing,
-   prefillInteraction,
+	noteId,
+	title,
+	initialContent,
+	onCapture,
+	onSaveNoteContent,
+	onArchiveNote,
+	onEditorInput,
+	isCapturing,
+	externalRunRequest,
 }: NoteEditorProps) {
-   const [noteContent, setNoteContent] = useState(stripSlashCommandLines(initialContent));
-   const [interactionDraft, setInteractionDraft] = useState("");
-   const [pendingRemoteUpdate, setPendingRemoteUpdate] = useState<string | null>(null);
-   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-   const lastAcknowledgedContentRef = useRef(stripSlashCommandLines(initialContent));
-   const noteContentRef = useRef(stripSlashCommandLines(initialContent));
-   const interactionInputRef = useRef<HTMLTextAreaElement | null>(null);
-   const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-   const [isEditingNote, setIsEditingNote] = useState(false);
+	const [noteTitle, setNoteTitle] = useState(title);
+	const [noteContent, setNoteContent] = useState(stripSlashCommandLines(initialContent));
+	const [isEditingNote, setIsEditingNote] = useState(false);
 
-   const resizeNoteTextarea = () => {
-      const textarea = noteTextareaRef.current;
-      if (!textarea) {
-         return;
-      }
+	const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+	const noteContentRef = useRef(stripSlashCommandLines(initialContent));
+	const titleRef = useRef(title);
+	const lastAcknowledgedContentRef = useRef(stripSlashCommandLines(initialContent));
+	const lastAcknowledgedTitleRef = useRef(title);
+	const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const saveInFlightRef = useRef<Promise<boolean> | null>(null);
 
-      textarea.style.height = "0px";
-      textarea.style.height = `${textarea.scrollHeight}px`;
-   };
+	const resizeNoteTextarea = useCallback(() => {
+		const textarea = noteTextareaRef.current;
+		if (!textarea) {
+			return;
+		}
 
-   useEffect(() => {
-      const sanitized = stripSlashCommandLines(initialContent);
-      const hasLocalEdits = noteContentRef.current !== lastAcknowledgedContentRef.current;
+		textarea.style.height = "0px";
+		textarea.style.height = `${textarea.scrollHeight}px`;
+	}, []);
 
-      if (hasLocalEdits && sanitized !== noteContentRef.current) {
-         setPendingRemoteUpdate(sanitized);
-         setStatusMessage("A newer rewrite is available. Apply it or dismiss it.");
-         return;
-      }
+	const clearAutosaveTimer = useCallback(() => {
+		if (!autosaveTimerRef.current) {
+			return;
+		}
 
-      setNoteContent(sanitized);
-      noteContentRef.current = sanitized;
-      lastAcknowledgedContentRef.current = sanitized;
-      setPendingRemoteUpdate(null);
-      setStatusMessage(null);
-   }, [initialContent, noteId]);
+		clearTimeout(autosaveTimerRef.current);
+		autosaveTimerRef.current = null;
+	}, []);
 
-   useEffect(() => {
-      setIsEditingNote(false);
-   }, [noteId]);
+	const flushSave = useCallback(
+		async (options?: { silent?: boolean; content?: string; title?: string }) => {
+			if (saveInFlightRef.current) {
+				await saveInFlightRef.current;
+			}
 
-   useEffect(() => {
-      if (!isEditingNote) {
-         return;
-      }
+			const contentToSave = (options?.content ?? stripSlashCommandLines(noteContentRef.current)).trimEnd();
+			const titleToSave = (options?.title ?? titleRef.current).trim() || "Untitled note";
 
-      noteTextareaRef.current?.focus();
-   }, [isEditingNote]);
+			const isDirty =
+				contentToSave !== lastAcknowledgedContentRef.current ||
+				titleToSave !== lastAcknowledgedTitleRef.current;
+			if (!isDirty) {
+				return false;
+			}
 
-   useLayoutEffect(() => {
-      if (!isEditingNote) {
-         return;
-      }
+			const savePromise = (async () => {
+				try {
+					await onSaveNoteContent(
+						{
+							noteId,
+							content: contentToSave,
+							title: titleToSave,
+						},
+						{ silent: options?.silent ?? true },
+					);
+					lastAcknowledgedContentRef.current = contentToSave;
+					lastAcknowledgedTitleRef.current = titleToSave;
+					titleRef.current = titleToSave;
+					setNoteTitle(titleToSave);
+					return true;
+				} catch {
+					return false;
+				} finally {
+					saveInFlightRef.current = null;
+				}
+			})();
 
-      resizeNoteTextarea();
-   }, [isEditingNote, noteContent]);
+			saveInFlightRef.current = savePromise;
+			return savePromise;
+		},
+		[noteId, onSaveNoteContent],
+	);
 
-   useEffect(() => {
-      if (!prefillInteraction?.value) {
-         return;
-      }
+	const runCommandIntent = useCallback(
+		async (source: "explicit" | "close", forcedCommand?: string) => {
+			const pendingCommands = forcedCommand
+				? [forcedCommand]
+				: extractSlashCommandLines(noteContentRef.current);
+			if (pendingCommands.length === 0) {
+				if (source === "explicit") {
+					await flushSave({ silent: false });
+				}
+				return;
+			}
 
-      onEditorInput();
-      setInteractionDraft((current) => {
-         const separator = current.trim().length > 0 ? "\n" : "";
-         return `${current}${separator}${prefillInteraction.value} `;
-      });
-      interactionInputRef.current?.focus();
-   }, [onEditorInput, prefillInteraction?.nonce, prefillInteraction?.value]);
+			const baselineContent = stripSlashCommandLines(noteContentRef.current);
+			let transformedContent = baselineContent;
+			const captureCommands: string[] = [];
 
-   const applyPendingUpdate = () => {
-      if (!pendingRemoteUpdate) {
-         return;
-      }
+			for (const commandLine of pendingCommands) {
+				const instruction = classifySlashInstruction(commandLine);
+				if (instruction.kind === "editor" && instruction.commandName) {
+					transformedContent = applyEditorFormatting(
+						transformedContent,
+						instruction.commandName,
+						instruction.argument,
+					);
+					continue;
+				}
 
-      setNoteContent(pendingRemoteUpdate);
-      noteContentRef.current = pendingRemoteUpdate;
-      lastAcknowledgedContentRef.current = pendingRemoteUpdate;
-      setPendingRemoteUpdate(null);
-      setStatusMessage("Rewrite applied.");
-   };
+				captureCommands.push(instruction.raw);
+			}
 
-   const dismissPendingUpdate = () => {
-      setPendingRemoteUpdate(null);
-      setStatusMessage("Rewrite dismissed. Your current draft is unchanged.");
-   };
+			if (transformedContent !== baselineContent) {
+				setNoteContent(transformedContent);
+				noteContentRef.current = transformedContent;
+			}
 
-   const submitInteraction = async () => {
-      const trimmed = interactionDraft.trim();
-      if (!trimmed) {
-         if (noteContentRef.current === lastAcknowledgedContentRef.current) {
-            return;
-         }
+			await flushSave({
+				silent: source === "close",
+				content: transformedContent,
+				title: titleRef.current,
+			});
 
-         try {
-            await onSaveNoteContent({
-               noteId,
-               title,
-               content: noteContentRef.current,
-            });
-            lastAcknowledgedContentRef.current = noteContentRef.current;
-            setPendingRemoteUpdate(null);
-            setStatusMessage("Saved.");
-         } catch {
-            setStatusMessage("Save failed. Keep editing and try again.");
-         }
-         return;
-      }
+			if (captureCommands.length === 0) {
+				return;
+			}
 
-      onEditorInput();
-      const instruction = classifySlashInstruction(trimmed);
+			let streamedContent = "";
+			let sawStreamingUpdate = false;
 
-      if (instruction.kind === "editor" && instruction.commandName) {
-         const formatted = applyEditorFormatting(
-            noteContentRef.current,
-            instruction.commandName,
-            instruction.argument,
-         );
-         const sanitized = stripSlashCommandLines(formatted);
-         setNoteContent(sanitized);
-         noteContentRef.current = sanitized;
-         setPendingRemoteUpdate(null);
+			try {
+				await onCapture(
+					{
+						noteId,
+						userInput: captureCommands.join("\n"),
+					},
+					{
+						onRewriteProgress: (update) => {
+							sawStreamingUpdate = true;
+							streamedContent =
+								update.mode === "replace" ? update.text : `${streamedContent}${update.text}`;
+							const sanitized = stripSlashCommandLines(streamedContent).trim();
+							setNoteContent(sanitized);
+							noteContentRef.current = sanitized;
+						},
+					},
+				);
+			} catch {
+				if (sawStreamingUpdate) {
+					setNoteContent(transformedContent);
+					noteContentRef.current = transformedContent;
+				}
+			}
+		},
+		[flushSave, noteId, onCapture],
+	);
 
-         try {
-            await onSaveNoteContent({
-               noteId,
-               title,
-               content: sanitized,
-            });
-            lastAcknowledgedContentRef.current = sanitized;
-            setStatusMessage(`Applied /${instruction.commandName} and saved.`);
-         } catch {
-            setStatusMessage(`Applied /${instruction.commandName} locally. Save failed.`);
-         }
+	useEffect(() => {
+		const sanitized = stripSlashCommandLines(initialContent);
 
-         setInteractionDraft("");
-         return;
-      }
+		setNoteTitle(title);
+		titleRef.current = title;
+		lastAcknowledgedTitleRef.current = title;
+		setNoteContent(sanitized);
+		noteContentRef.current = sanitized;
+		lastAcknowledgedContentRef.current = sanitized;
+	}, [initialContent, noteId, title]);
 
-      const hasUnsavedNoteEdits = noteContentRef.current !== lastAcknowledgedContentRef.current;
-      if (hasUnsavedNoteEdits) {
-         try {
-            await onSaveNoteContent({
-               noteId,
-               title,
-               content: noteContentRef.current,
-            });
-            lastAcknowledgedContentRef.current = noteContentRef.current;
-            setPendingRemoteUpdate(null);
-         } catch {
-            setStatusMessage("Save failed. Keep editing and try again.");
-            return;
-         }
-      }
+	useEffect(() => {
+		setIsEditingNote(false);
+	}, [noteId]);
 
-      const baselineContent = noteContentRef.current;
-      let streamedContent = "";
-      let sawStreamingUpdate = false;
+	useEffect(() => {
+		if (!isEditingNote) {
+			return;
+		}
 
-      try {
-         await onCapture(
-            {
-               noteId,
-               userInput: instruction.raw,
-            },
-            {
-               onRewriteProgress: (update) => {
-                  sawStreamingUpdate = true;
-                  streamedContent =
-                     update.mode === "replace" ? update.text : `${streamedContent}${update.text}`;
-                  const sanitized = stripSlashCommandLines(streamedContent).trim();
-                  setNoteContent(sanitized);
-                  noteContentRef.current = sanitized;
-                  setPendingRemoteUpdate(null);
-                  setStatusMessage("Rewriting...");
-               },
-            },
-         );
-      } catch {
-         if (sawStreamingUpdate) {
-            setNoteContent(baselineContent);
-            noteContentRef.current = baselineContent;
-         }
+		noteTextareaRef.current?.focus();
+	}, [isEditingNote]);
 
-         setStatusMessage("Save failed. Keep editing and try again.");
-         return;
-      }
+	useLayoutEffect(() => {
+		if (!isEditingNote) {
+			return;
+		}
 
-      setInteractionDraft("");
-      setStatusMessage("Saved.");
-   };
+		resizeNoteTextarea();
+	}, [isEditingNote, noteContent, resizeNoteTextarea]);
 
-   const interactionHint = useMemo(() => {
-      const instruction = classifySlashInstruction(interactionDraft);
-      switch (instruction.kind) {
-         case "editor":
-            return `/${instruction.commandName} formats the note directly and is not saved as text.`;
-         case "agent":
-            return `/${instruction.commandName} is sent to the agent and does not appear in the note body.`;
-         case "freeform":
-            return "Unknown slash command will be sent to the agent as a freeform instruction.";
-         default:
-            return null;
-      }
-   }, [interactionDraft]);
+	useEffect(() => {
+		clearAutosaveTimer();
+		autosaveTimerRef.current = setTimeout(() => {
+			void flushSave({ silent: true });
+		}, AUTOSAVE_DELAY_MS);
 
-   return (
-      <div className="space-y-4">
-         <section className="space-y-2">
-            <p className="text-kumo-subtle text-xs font-medium tracking-[0.2em] uppercase">Note</p>
-            <p className="text-kumo-strong font-serif text-lg leading-tight">{title}</p>
+		return () => {
+			clearAutosaveTimer();
+		};
+	}, [clearAutosaveTimer, flushSave, noteContent, noteTitle]);
 
-            {pendingRemoteUpdate ? (
-               <div className="bg-kumo-tint space-y-2 rounded-md px-3 py-2 text-xs">
-                  <p className="text-kumo-default">{statusMessage ?? "A rewrite is ready."}</p>
-                  <div className="flex flex-wrap gap-2">
-                     <Button variant="outline" size="sm" onClick={applyPendingUpdate}>
-                        Apply rewrite
-                     </Button>
-                     <Button variant="ghost" size="sm" onClick={dismissPendingUpdate}>
-                        Dismiss rewrite
-                     </Button>
-                  </div>
-               </div>
-            ) : statusMessage ? (
-               <p className="text-kumo-subtle text-xs">{statusMessage}</p>
-            ) : null}
+	useEffect(() => {
+		if (!externalRunRequest?.command) {
+			return;
+		}
 
-            {isEditingNote ? (
-               <TextAreaField
-                  label="Note content"
-                  tone="document"
-                  ref={noteTextareaRef}
-                  className="min-h-30 resize-none overflow-hidden"
-                  rows={1}
-                  value={noteContent}
-                  onChange={(event) => {
-                     onEditorInput();
-                     setNoteContent(event.target.value);
-                     noteContentRef.current = event.target.value;
-                  }}
-                  onBlur={() => {
-                     setIsEditingNote(false);
-                  }}
-                  onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
-                     if (event.nativeEvent.isComposing) {
-                        return;
-                     }
+		void runCommandIntent("explicit", externalRunRequest.command);
+	}, [externalRunRequest?.nonce, externalRunRequest?.command, runCommandIntent]);
 
-                     if (event.key === "Escape") {
-                        event.preventDefault();
-                        setIsEditingNote(false);
-                     }
-                  }}
-                  placeholder="Write your note"
-               />
-            ) : (
-               <div
-                  className="bg-kumo-base min-h-30 cursor-text rounded-md p-4 font-serif text-[15px] leading-7"
-                  onClick={(event) => {
-                     if ((event.target as HTMLElement).closest("a")) {
-                        return;
-                     }
-                     onEditorInput();
-                     setIsEditingNote(true);
-                  }}
-               >
-                  {noteContent.trim().length > 0
-                     ? renderWikiLinkedText(noteContent)
-                     : "No note content yet."}
-               </div>
-            )}
-            <p className="text-kumo-subtle text-xs">
-               {isEditingNote
-                  ? "Editing note. Press Esc or click outside to return to read mode."
-                  : "Click the note body to edit. Wiki links like [[Project X]] stay clickable and open collections search."}
-            </p>
-         </section>
+	useEffect(() => {
+		return () => {
+			clearAutosaveTimer();
+			if (extractSlashCommandLines(noteContentRef.current).length > 0) {
+				void runCommandIntent("close");
+				return;
+			}
 
-         <section className="space-y-2">
-            <p className="text-kumo-subtle text-xs font-medium tracking-[0.2em] uppercase">
-               Interaction
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row">
-               <TextAreaField
-                  label="Interaction input"
-                  tone="command"
-                  ref={interactionInputRef}
-                  value={interactionDraft}
-                  onChange={(event) => {
-                     onEditorInput();
-                     setInteractionDraft(event.target.value);
-                  }}
-                  onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
-                     if (event.nativeEvent.isComposing) {
-                        return;
-                     }
-                     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                        event.preventDefault();
-                        void submitInteraction();
-                     }
-                  }}
-                  placeholder="Describe what to change, or use /heading, /code, /ask, /research, /link, /summarize"
-               />
-               <Button onClick={() => void submitInteraction()} disabled={isCapturing}>
-                  {isCapturing ? "Saving..." : "Save"}
-               </Button>
-            </div>
+			void flushSave({ silent: true });
+		};
+	}, [clearAutosaveTimer, flushSave, runCommandIntent]);
 
-            <p className="text-kumo-subtle text-xs">Press Cmd+Enter to Save.</p>
-            {interactionHint ? <p className="text-kumo-subtle text-xs">{interactionHint}</p> : null}
-         </section>
-      </div>
-   );
+	const markdownContent = useMemo(() => toRenderableMarkdown(noteContent), [noteContent]);
+
+	const handleRename = async () => {
+		const nextTitle = window.prompt("Rename note", titleRef.current);
+		if (nextTitle === null) {
+			return;
+		}
+
+		const normalized = nextTitle.trim() || "Untitled note";
+		if (normalized === titleRef.current) {
+			return;
+		}
+
+		onEditorInput();
+		setNoteTitle(normalized);
+		titleRef.current = normalized;
+		await flushSave({
+			silent: false,
+			title: normalized,
+			content: noteContentRef.current,
+		});
+	};
+
+	return (
+		<div className="relative">
+			<div className="absolute top-0 right-0 z-10">
+				<DropdownMenu>
+					<DropdownMenu.Trigger
+						render={
+							<Button
+								size="lg"
+								variant="ghost"
+								shape="square"
+								className="text-2xl leading-none"
+								aria-label="Note options"
+								disabled={isCapturing}
+							/>
+						}
+					>
+						⋯
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content>
+						<DropdownMenu.Group>
+							<DropdownMenu.Label>Note options</DropdownMenu.Label>
+							<DropdownMenu.Separator />
+							<DropdownMenu.Item
+								onClick={() => {
+									void handleRename();
+								}}
+							>
+								Rename note
+							</DropdownMenu.Item>
+							<DropdownMenu.Item
+								variant="danger"
+								onClick={() => {
+									void onArchiveNote(noteId);
+								}}
+							>
+								Delete note
+							</DropdownMenu.Item>
+						</DropdownMenu.Group>
+					</DropdownMenu.Content>
+				</DropdownMenu>
+			</div>
+
+			{isEditingNote ? (
+				<TextAreaField
+					label="Note content"
+					tone="document"
+					ref={noteTextareaRef}
+					className="min-h-40 resize-none overflow-hidden pr-14"
+					rows={1}
+					value={noteContent}
+					onChange={(event) => {
+						onEditorInput();
+						setNoteContent(event.target.value);
+						noteContentRef.current = event.target.value;
+					}}
+					onBlur={() => {
+						setIsEditingNote(false);
+						void flushSave({ silent: true });
+					}}
+					onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
+						if (event.nativeEvent.isComposing) {
+							return;
+						}
+
+						if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+							event.preventDefault();
+							void runCommandIntent("explicit");
+							return;
+						}
+
+						if (event.key === "Escape") {
+							event.preventDefault();
+							setIsEditingNote(false);
+						}
+					}}
+					placeholder="Write your note. Add slash commands like /summarize on separate lines."
+				/>
+			) : (
+				<div
+					className="bg-kumo-base min-h-30 cursor-text rounded-md p-4 pr-14 font-serif text-[15px] leading-7 [&_h1]:mt-1 [&_h1]:text-3xl [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-xl [&_h3]:font-semibold [&_h4]:mt-2 [&_h4]:text-lg [&_h4]:font-semibold [&_p]:my-3 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_strong]:font-semibold"
+					onClick={(event) => {
+						if ((event.target as HTMLElement).closest("a")) {
+							return;
+						}
+						onEditorInput();
+						setIsEditingNote(true);
+					}}
+				>
+					{noteContent.trim().length > 0 ? (
+						<ReactMarkdown
+							remarkPlugins={[remarkGfm]}
+							rehypePlugins={[rehypeSanitize]}
+							components={{
+								a: ({ ...props }) => (
+									<a
+										{...props}
+										className="text-kumo-link underline underline-offset-2"
+									/>
+								),
+							}}
+						>
+							{markdownContent}
+						</ReactMarkdown>
+					) : (
+						"No note content yet."
+					)}
+				</div>
+			)}
+		</div>
+	);
 }

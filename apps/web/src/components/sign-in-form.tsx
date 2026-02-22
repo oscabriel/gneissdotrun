@@ -122,7 +122,7 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
 				<form.Subscribe>
 					{(state) => (
 						<Button
-							variant="primary"
+							variant="secondary"
 							type="submit"
 							className="w-full"
 							disabled={!state.canSubmit || state.isSubmitting}
@@ -134,11 +134,7 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
 			</form>
 
 			<div className="mt-4 text-center">
-				<Button
-					variant="ghost"
-					onClick={onSwitchToSignUp}
-					className="text-kumo-link hover:underline"
-				>
+				<Button variant="outline" onClick={onSwitchToSignUp}>
 					Need an account? Sign Up
 				</Button>
 			</div>

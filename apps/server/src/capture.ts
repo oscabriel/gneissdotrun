@@ -181,6 +181,36 @@ function toRoutingDecision(decision: CaptureExecutionResult["decision"]): Routin
 	};
 }
 
+function normalizeWikiLinkTarget(input: string): string {
+	return input.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function enforceExistingWikiLinks(markdown: string, candidates: Array<{ id: string; title: string }>): string {
+	if (markdown.length === 0) {
+		return markdown;
+	}
+
+	const allowedByNormalizedTitle = new Map(
+		candidates
+			.filter((candidate) => candidate.title.trim().length > 0)
+			.map((candidate) => [normalizeWikiLinkTarget(candidate.title), candidate.title.trim()]),
+	);
+
+	return markdown.replace(/\[\[([^\]\n]+)\]\]/g, (fullMatch, targetLabel: string) => {
+		const normalized = normalizeWikiLinkTarget(targetLabel);
+		if (!normalized) {
+			return fullMatch;
+		}
+
+		const canonical = allowedByNormalizedTitle.get(normalized);
+		if (!canonical) {
+			return targetLabel.trim();
+		}
+
+		return `[[${canonical}]]`;
+	});
+}
+
 function fallbackRewriteContent(currentContent: string, userInput: string): string {
 	const cleanedCurrent = stripSlashCommandLines(currentContent).trim();
 	const cleanedInput = stripSlashCommandLines(userInput).trim();
@@ -197,13 +227,20 @@ function fallbackRewriteContent(currentContent: string, userInput: string): stri
 }
 
 async function rewriteNoteContent(
+	env: Env,
+	userId: string,
 	decision: CaptureExecutionResult["decision"],
 	currentContent: string,
 	userInput: string,
+	currentNoteId?: string,
 	options?: {
 		onProgress?: (update: RewriteProgressUpdate) => Promise<void> | void;
 	},
 ): Promise<string> {
+	const recentNotes = await listRecentNotes(env, userId, 40);
+	const wikiLinkCandidates = recentNotes
+		.filter((note) => note.id !== currentNoteId)
+		.map((note) => ({ id: note.id, title: note.title }));
 	const fallback = fallbackRewriteContent(currentContent, userInput);
 	if (!fallback) {
 		return "";
@@ -214,6 +251,7 @@ async function rewriteNoteContent(
 			noteContent: currentContent,
 			userInput,
 			routing: toRoutingDecision(decision),
+			wikiLinkCandidates,
 			temperature: 0.2,
 			onDelta: async (delta) => {
 				if (!options?.onProgress) {
@@ -227,7 +265,10 @@ async function rewriteNoteContent(
 			},
 		});
 
-		const rewritten = stripSlashCommandLines(response.text).trim();
+		const rewritten = enforceExistingWikiLinks(
+			stripSlashCommandLines(response.text).trim(),
+			wikiLinkCandidates,
+		);
 		if (rewritten.length > 0) {
 			return rewritten;
 		}
@@ -235,20 +276,26 @@ async function rewriteNoteContent(
 		const shouldReport = !(error instanceof Error) || !/api key is missing/i.test(error.message);
 		if (shouldReport) {
 			console.error("capture.rewrite.failed", {
+				agentName: "CapturePipeline",
+				workflowId: null,
 				routeKind: decision.kind,
+				noteId: null,
 				error,
 			});
 		}
 	}
 
 	if (options?.onProgress) {
+		const safeFallback = enforceExistingWikiLinks(fallback, wikiLinkCandidates);
 		await options.onProgress({
 			mode: "replace",
-			text: fallback,
+			text: safeFallback,
 		});
+
+		return safeFallback;
 	}
 
-	return fallback;
+	return enforceExistingWikiLinks(fallback, wikiLinkCandidates);
 }
 
 function heuristicDecision(
@@ -961,9 +1008,17 @@ export async function executeCapture(
 	const executeNewNote = async (
 		toast?: RouteExecutionOutcome["toast"],
 	): Promise<CaptureExecutionResult> => {
-		const rewritten = await rewriteNoteContent(decision, "", cleanedInput || request.userInput, {
+		const rewritten = await rewriteNoteContent(
+			env,
+			request.userId,
+			decision,
+			"",
+			cleanedInput || request.userInput,
+			undefined,
+			{
 			onProgress: options.onRewriteProgress,
-		});
+			},
+		);
 		const created = await createNote(
 			env,
 			request.userId,
@@ -984,9 +1039,17 @@ export async function executeCapture(
 		note: UserNote,
 		toast?: RouteExecutionOutcome["toast"],
 	): Promise<CaptureExecutionResult> => {
-		const rewritten = await rewriteNoteContent(decision, note.content, request.userInput, {
+		const rewritten = await rewriteNoteContent(
+			env,
+			request.userId,
+			decision,
+			note.content,
+			request.userInput,
+			note.id,
+			{
 			onProgress: options.onRewriteProgress,
-		});
+			},
+		);
 		const updated = await updateNote(
 			env,
 			request.userId,
@@ -1040,13 +1103,16 @@ export async function executeCapture(
 				}
 
 				const rewritten = await rewriteNoteContent(
+					env,
+					request.userId,
 					decision,
 					targetNote.content,
-					request.userInput,
-					{
-						onProgress: options.onRewriteProgress,
-					},
-				);
+									request.userInput,
+					targetNote.id,
+									{
+										onProgress: options.onRewriteProgress,
+									},
+								);
 				const updated = await updateNote(
 					env,
 					request.userId,
@@ -1080,7 +1146,7 @@ export async function executeCapture(
 
 				const created: UserNote[] = [];
 				for (const [index, segment] of segments.entries()) {
-					const rewritten = await rewriteNoteContent(decision, "", segment, {
+					const rewritten = await rewriteNoteContent(env, request.userId, decision, "", segment, undefined, {
 						onProgress: index === 0 ? options.onRewriteProgress : undefined,
 					});
 					created.push(await createNote(env, request.userId, rewritten || segment));
@@ -1114,13 +1180,16 @@ export async function executeCapture(
 			}
 			case "fan_out": {
 				const rewrittenPrimary = await rewriteNoteContent(
+					env,
+					request.userId,
 					decision,
 					targetNote?.content ?? "",
-					cleanedInput || request.userInput,
-					{
-						onProgress: options.onRewriteProgress,
-					},
-				);
+								cleanedInput || request.userInput,
+					targetNote?.id,
+								{
+									onProgress: options.onRewriteProgress,
+								},
+							);
 				const primary = targetNote
 					? await updateNote(
 							env,
@@ -1296,6 +1365,15 @@ export async function executeCapture(
 		return result;
 	} catch (error) {
 		const envelope = toCaptureErrorEnvelope(error);
+		console.error("capture.execution.failed", {
+			agentName: "CapturePipeline",
+			workflowId: null,
+			routeKind: decision.kind,
+			noteId: request.noteId ?? null,
+			errorCode: envelope.body.error.code,
+			error,
+		});
+
 		const auditEvent: CaptureAuditEvent = {
 			eventId: `capture_${crypto.randomUUID()}`,
 			userId: request.userId,

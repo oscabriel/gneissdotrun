@@ -67,8 +67,8 @@ export function UploadPanel({ noteId }: UploadPanelProps) {
 				<p className="text-kumo-subtle text-xs font-medium tracking-[0.2em] uppercase">Uploads</p>
 				<p className="text-kumo-subtle text-xs">
 					{noteId
-						? "Files uploaded here are linked to the active note."
-						: "Select a note to link uploads. Without an active note, uploads stay unlinked."}
+						? "Files uploaded here are linked to the active note and saved for future ingestion work."
+						: "Select a note to link uploads. Files are saved, but not yet consumed by AI rewrite."}
 				</p>
 			</div>
 			<div className="flex flex-col gap-2 sm:flex-row">

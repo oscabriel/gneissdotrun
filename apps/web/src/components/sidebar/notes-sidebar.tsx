@@ -2,6 +2,7 @@ import { Button, Empty, Input } from "@cloudflare/kumo";
 import { useMemo, useState, type ChangeEvent } from "react";
 
 import { cn } from "@/lib/utils";
+
 export interface SidebarNote {
 	id: string;
 	title: string;
@@ -9,6 +10,7 @@ export interface SidebarNote {
 	content: string;
 	updatedAt: number;
 }
+
 interface NotesSidebarProps {
 	notes: SidebarNote[];
 	selectedNoteId: string | null;
@@ -17,6 +19,7 @@ interface NotesSidebarProps {
 	error: string | null;
 	usingFallback: boolean;
 }
+
 export function NotesSidebar({
 	notes,
 	selectedNoteId,
@@ -26,11 +29,13 @@ export function NotesSidebar({
 	usingFallback,
 }: NotesSidebarProps) {
 	const [query, setQuery] = useState("");
+
 	const filteredNotes = useMemo(() => {
 		const normalized = query.trim().toLowerCase();
 		if (!normalized) {
 			return notes;
 		}
+
 		return notes.filter((note) => {
 			return (
 				note.title.toLowerCase().includes(normalized) ||
@@ -38,6 +43,7 @@ export function NotesSidebar({
 			);
 		});
 	}, [notes, query]);
+
 	return (
 		<>
 			<div className="mb-3 flex items-center justify-between gap-2">
@@ -49,6 +55,7 @@ export function NotesSidebar({
 					New
 				</Button>
 			</div>
+
 			<div className="mb-3">
 				<Input
 					aria-label="Filter notes"
@@ -62,17 +69,19 @@ export function NotesSidebar({
 			</div>
 
 			{error ? <p className="text-kumo-danger mb-3 text-xs">{error}</p> : null}
-
 			{isLoading ? <p className="text-kumo-subtle mb-3 text-xs">Loading notes...</p> : null}
+
 			<p className="text-kumo-subtle mb-3 text-[11px]">
 				{usingFallback
 					? "Index reconnecting — showing last synced notes."
 					: "Live index updates enabled."}
 			</p>
+
 			{filteredNotes.length > 0 ? (
 				<div className="space-y-2">
 					{filteredNotes.map((note) => {
 						const selected = note.id === selectedNoteId;
+
 						return (
 							<Button
 								key={note.id}
@@ -91,11 +100,6 @@ export function NotesSidebar({
 							>
 								<span className="w-full">
 									<p className="text-kumo-default truncate text-sm font-medium">{note.title}</p>
-									{note.summary ? (
-										<p className="text-kumo-subtle mt-1 text-xs">{note.summary}</p>
-									) : (
-										<p className="text-kumo-subtle mt-1 text-xs">No summary yet</p>
-									)}
 									<p className="text-kumo-subtle mt-2 text-[11px]">
 										Updated {new Date(note.updatedAt).toLocaleString()}
 									</p>
@@ -105,6 +109,7 @@ export function NotesSidebar({
 					})}
 				</div>
 			) : null}
+
 			{!isLoading && filteredNotes.length === 0 ? (
 				<Empty
 					title={notes.length === 0 ? "Capture your first note" : "No notes match your filter"}
@@ -114,6 +119,7 @@ export function NotesSidebar({
 							: "Try a different keyword to find the note you need."
 					}
 					size="sm"
+					className="[&_h2]:text-lg [&_p]:text-xs"
 				/>
 			) : null}
 		</>

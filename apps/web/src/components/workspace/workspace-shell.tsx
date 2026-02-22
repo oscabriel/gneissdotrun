@@ -75,7 +75,6 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 	const [apiError, setApiError] = useState<string | null>(null);
 	const [isCapturing, setIsCapturing] = useState(false);
 	const [ephemeralContent, setEphemeralContent] = useState<string | null>(null);
-	const [blankFocusSignal, setBlankFocusSignal] = useState(0);
 
 	const clearEphemeral = useCallback(() => {
 		if (ephemeralTimerRef.current) {
@@ -211,11 +210,38 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		onSelectNoteId(noteId);
 	};
 
-	const openBlankCanvas = useCallback(() => {
+	const createNewNote = useCallback(async () => {
 		clearEphemeral();
-		onSelectNoteId(null);
-		setBlankFocusSignal((current) => current + 1);
-	}, [clearEphemeral, onSelectNoteId]);
+		setIsCapturing(true);
+
+		try {
+			const response = await fetch(`${env.VITE_SERVER_URL}/api/notes`, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+				},
+				credentials: "include",
+				body: JSON.stringify({
+					title: "Untitled note",
+					content: "",
+					tags: [],
+				}),
+			});
+
+			if (!response.ok) {
+				const payload = (await response.json()) as { error?: string };
+				throw new Error(payload.error ?? "Failed to create note");
+			}
+
+			const payload = (await response.json()) as { note: { id: string } };
+			await fetchApiNotes();
+			onSelectNoteId(payload.note.id);
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : "Failed to create note");
+		} finally {
+			setIsCapturing(false);
+		}
+	}, [clearEphemeral, fetchApiNotes, onSelectNoteId]);
 
 	const handleCapture = useCallback(
 		async (
@@ -372,7 +398,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 	);
 
 	const handleSaveNoteContent = useCallback(
-		async (input: { noteId: string; content: string; title?: string }) => {
+		async (input: { noteId: string; content: string; title?: string }, options?: { silent?: boolean }) => {
 			setIsCapturing(true);
 
 			try {
@@ -394,15 +420,76 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 				}
 
 				await fetchApiNotes();
-				toast.success("Saved note.");
+				if (!options?.silent) {
+					toast.success("Saved note.");
+				}
 			} catch (error) {
-				toast.error(error instanceof Error ? error.message : "Failed to save note content");
+				if (!options?.silent) {
+					toast.error(error instanceof Error ? error.message : "Failed to save note content");
+				}
 				throw error;
 			} finally {
 				setIsCapturing(false);
 			}
 		},
 		[fetchApiNotes],
+	);
+
+	const handleRestoreNote = useCallback(
+		async (noteId: string) => {
+			const response = await fetch(`${env.VITE_SERVER_URL}/api/notes/${noteId}/restore`, {
+				method: "POST",
+				credentials: "include",
+			});
+
+			if (!response.ok) {
+				const payload = (await response.json()) as { error?: string };
+				throw new Error(payload.error ?? "Failed to restore note");
+			}
+
+			await fetchApiNotes();
+			onSelectNoteId(noteId);
+			toast.success("Restored note.");
+		},
+		[fetchApiNotes, onSelectNoteId],
+	);
+
+	const handleArchiveNote = useCallback(
+		async (noteId: string) => {
+			setIsCapturing(true);
+
+			try {
+				const response = await fetch(`${env.VITE_SERVER_URL}/api/notes/${noteId}`, {
+					method: "DELETE",
+					credentials: "include",
+				});
+
+				if (!response.ok) {
+					const payload = (await response.json()) as { error?: string };
+					throw new Error(payload.error ?? "Failed to archive note");
+				}
+
+				if (selectedNoteId === noteId) {
+					onSelectNoteId(null);
+				}
+
+				await fetchApiNotes();
+				toast.success("Archived note.", {
+					action: {
+						label: "Undo",
+						onClick: () => {
+							void handleRestoreNote(noteId);
+						},
+					},
+				});
+			} catch (error) {
+				toast.error(error instanceof Error ? error.message : "Failed to archive note");
+				throw error;
+			} finally {
+				setIsCapturing(false);
+			}
+		},
+		[fetchApiNotes, handleRestoreNote, onSelectNoteId, selectedNoteId],
 	);
 	const handleCanvasInput = useCallback(() => {
 		clearEphemeral();
@@ -427,14 +514,14 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 			}
 
 			event.preventDefault();
-			openBlankCanvas();
+			void createNewNote();
 		};
 
 		window.addEventListener("keydown", listener);
 		return () => {
 			window.removeEventListener("keydown", listener);
 		};
-	}, [openBlankCanvas]);
+	}, [createNewNote]);
 
 	return (
 		<AppShell
@@ -442,58 +529,70 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<div className="space-y-1">
 						<h1 className="text-kumo-strong text-2xl font-semibold tracking-tight sm:text-3xl">
-							Gneiss Workspace
+							Gneiss
 						</h1>
 						<p className="text-kumo-subtle text-sm">
-							Your notes live in the sidebar. Write and save on the canvas.
+							Ambient knowledge capture powered by Cloudflare agents.
 						</p>
 					</div>
 
 					<div className="flex flex-wrap gap-2">
 						<Button
-							size="sm"
-							variant="secondary"
-							onClick={openBlankCanvas}
+							size="base"
+							variant="outline"
+							onClick={() => {
+								void createNewNote();
+							}}
 							aria-keyshortcuts="N"
-							aria-label="Create a new blank note"
+							aria-label="Create a new note"
 						>
-							N
+							New Note
 						</Button>
-						<p className="text-kumo-subtle self-center px-1 text-xs">Cmd+K</p>
+						<Button
+							size="base"
+							variant="outline"
+							onClick={() => {
+								void navigate({ to: "/profile" });
+							}}
+						>
+							Profile
+						</Button>
 
 						<DropdownMenu>
-							<DropdownMenu.Trigger render={<Button variant="outline" />}>
-								More
+							<DropdownMenu.Trigger render={<Button size="base" variant="outline" />}>
+								Review
 							</DropdownMenu.Trigger>
 							<DropdownMenu.Content>
-								<DropdownMenu.Label>Optional review surfaces</DropdownMenu.Label>
-								<DropdownMenu.Separator />
-								<DropdownMenu.Item
-									onClick={() => {
-										void navigate({ to: "/collections", search: { query: "" } });
-									}}
-								>
-									Collections review
-								</DropdownMenu.Item>
-								<DropdownMenu.Item
-									onClick={() => {
-										void navigate({ to: "/digest" });
-									}}
-								>
-									Weekly digest
-								</DropdownMenu.Item>
-								<DropdownMenu.Item
-									onClick={() => {
-										if (!selectedNoteId) {
-											toast.warning("Select a note first to open history.");
-											return;
-										}
+								<DropdownMenu.Group>
+									<DropdownMenu.Label>Workspace review surfaces</DropdownMenu.Label>
+									<DropdownMenu.Separator />
+									<DropdownMenu.Item
+										onClick={() => {
+											void navigate({ to: "/collections", search: { query: "" } });
+										}}
+									>
+										Collections review
+									</DropdownMenu.Item>
+									<DropdownMenu.Item
+										onClick={() => {
+											void navigate({ to: "/digest" });
+										}}
+									>
+										Weekly digest
+									</DropdownMenu.Item>
+									<DropdownMenu.Item
+										onClick={() => {
+											if (!selectedNoteId) {
+												toast.warning("Select a note first to open history.");
+												return;
+											}
 
-										void navigate({ to: "/history", search: { noteId: selectedNoteId } });
-									}}
-								>
-									Note history
-								</DropdownMenu.Item>
+											void navigate({ to: "/history", search: { noteId: selectedNoteId } });
+										}}
+									>
+										Note history
+									</DropdownMenu.Item>
+								</DropdownMenu.Group>
 							</DropdownMenu.Content>
 						</DropdownMenu>
 					</div>
@@ -514,10 +613,10 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 					selectedNote={selectedNote}
 					onCapture={handleCapture}
 					onSaveNoteContent={handleSaveNoteContent}
+					onArchiveNote={handleArchiveNote}
 					isCapturing={isCapturing}
 					ephemeralContent={ephemeralContent}
 					onCanvasInput={handleCanvasInput}
-					blankFocusSignal={blankFocusSignal}
 				/>
 			}
 		/>

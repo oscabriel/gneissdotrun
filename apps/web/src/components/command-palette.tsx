@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
 import { CommandPalette as KumoCommandPalette } from "@cloudflare/kumo";
-import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+
+export type WorkspacePaletteAction =
+	| { kind: "run"; command: string }
+	| { kind: "navigation"; to: "/collections" | "/digest" | "/history" };
 
 interface CommandPaletteProps {
-	onSelectCommand?: (command: string) => void;
+	onSelectAction?: (action: WorkspacePaletteAction) => void;
 	onOpenChange?: (open: boolean) => void;
 }
 
@@ -11,58 +14,63 @@ interface PaletteItem {
 	id: string;
 	title: string;
 	description: string;
-	kind: "agent" | "navigation";
-	command?: string;
-	to?: "/collections" | "/digest";
+	action: WorkspacePaletteAction;
+	shortcutHint?: string;
 }
 
 const paletteItems: PaletteItem[] = [
 	{
-		id: "agent-ask",
-		title: "Ask",
-		description: "Ask a direct question about your notes",
-		kind: "agent",
-		command: "/ask",
+		id: "run-summarize",
+		title: "Run summarize on active note",
+		description: "Execute `/summarize` immediately",
+		action: { kind: "run", command: "/summarize" },
+		shortcutHint: "Run",
 	},
 	{
-		id: "agent-summarize",
-		title: "Summarize",
-		description: "Condense the current note into key points",
-		kind: "agent",
-		command: "/summarize",
+		id: "run-research",
+		title: "Run research on active note",
+		description: "Execute `/research` immediately",
+		action: { kind: "run", command: "/research" },
+		shortcutHint: "Run",
 	},
 	{
-		id: "agent-research",
-		title: "Research",
-		description: "Expand your note with related context",
-		kind: "agent",
-		command: "/research",
+		id: "run-link",
+		title: "Run link suggestions",
+		description: "Execute `/link` using grounded note matches",
+		action: { kind: "run", command: "/link" },
+		shortcutHint: "Run",
 	},
 	{
-		id: "agent-link",
-		title: "Link",
-		description: "Create wiki-style links in the note",
-		kind: "agent",
-		command: "/link",
+		id: "run-ask",
+		title: "Run ask on active note",
+		description: "Execute `/ask` immediately",
+		action: { kind: "run", command: "/ask" },
+		shortcutHint: "Run",
+	},
+	{
+		id: "nav-history",
+		title: "Open note history",
+		description: "Open history for the current note",
+		action: { kind: "navigation", to: "/history" },
+		shortcutHint: "Go",
 	},
 	{
 		id: "nav-collections",
-		title: "Open Collections Review",
-		description: "Optional review surface for grouped captures",
-		kind: "navigation",
-		to: "/collections",
+		title: "Open collections review",
+		description: "Open grouped capture review",
+		action: { kind: "navigation", to: "/collections" },
+		shortcutHint: "Go",
 	},
 	{
 		id: "nav-digest",
-		title: "Open Weekly Digest",
-		description: "Optional review surface for periodic summaries",
-		kind: "navigation",
-		to: "/digest",
+		title: "Open weekly digest",
+		description: "Open periodic summary review",
+		action: { kind: "navigation", to: "/digest" },
+		shortcutHint: "Go",
 	},
 ];
 
-export function CommandPalette({ onSelectCommand, onOpenChange }: CommandPaletteProps) {
-	const navigate = useNavigate();
+export function CommandPalette({ onSelectAction, onOpenChange }: CommandPaletteProps) {
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState("");
 
@@ -76,6 +84,7 @@ export function CommandPalette({ onSelectCommand, onOpenChange }: CommandPalette
 			if (event.repeat) {
 				return;
 			}
+
 			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
 				event.preventDefault();
 				setOpenState(true);
@@ -94,18 +103,7 @@ export function CommandPalette({ onSelectCommand, onOpenChange }: CommandPalette
 	}, [onOpenChange]);
 
 	const handleSelect = (item: PaletteItem) => {
-		if (item.kind === "agent" && item.command) {
-			onSelectCommand?.(item.command);
-		}
-
-		if (item.kind === "navigation" && item.to) {
-			if (item.to === "/collections") {
-				void navigate({ to: "/collections", search: { query: "" } });
-			} else {
-				void navigate({ to: "/digest" });
-			}
-		}
-
+		onSelectAction?.(item.action);
 		setOpenState(false);
 		setQuery("");
 	};
@@ -117,13 +115,13 @@ export function CommandPalette({ onSelectCommand, onOpenChange }: CommandPalette
 			items={paletteItems}
 			value={query}
 			onValueChange={setQuery}
-			itemToStringValue={(item) => `${item.title} ${item.description} ${item.command ?? ""}`}
+			itemToStringValue={(item) => `${item.title} ${item.description}`}
 			onSelect={(item) => {
 				handleSelect(item);
 			}}
 			getSelectableItems={(items) => items}
 		>
-			<KumoCommandPalette.Input placeholder="Type a command or jump to a view..." />
+			<KumoCommandPalette.Input placeholder="Run an action or jump to a view..." />
 			<KumoCommandPalette.List>
 				<KumoCommandPalette.Results>
 					{(item: PaletteItem) => (
@@ -136,12 +134,14 @@ export function CommandPalette({ onSelectCommand, onOpenChange }: CommandPalette
 						>
 							<div className="flex w-full items-center justify-between gap-3">
 								<span className="text-kumo-default">{item.title}</span>
-								<span className="text-kumo-subtle text-xs">{item.command ?? item.description}</span>
+								<span className="text-kumo-subtle text-xs">
+									{item.shortcutHint ?? item.description}
+								</span>
 							</div>
 						</KumoCommandPalette.Item>
 					)}
 				</KumoCommandPalette.Results>
-				<KumoCommandPalette.Empty>No commands found</KumoCommandPalette.Empty>
+				<KumoCommandPalette.Empty>No actions found</KumoCommandPalette.Empty>
 			</KumoCommandPalette.List>
 			<KumoCommandPalette.Footer>
 				<span className="flex items-center gap-2">
@@ -154,7 +154,7 @@ export function CommandPalette({ onSelectCommand, onOpenChange }: CommandPalette
 					<kbd className="border-kumo-line bg-kumo-base rounded border px-1.5 py-0.5 text-[10px]">
 						↵
 					</kbd>
-					<span>Select</span>
+					<span>Run</span>
 				</span>
 			</KumoCommandPalette.Footer>
 		</KumoCommandPalette.Root>

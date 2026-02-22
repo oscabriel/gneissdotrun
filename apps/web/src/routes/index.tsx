@@ -53,7 +53,7 @@ function HomeRoute() {
 		return (
 			<div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col justify-center px-4 py-6">
 				<div className="mb-4 text-center">
-					<h1 className="text-3xl font-semibold tracking-tight">Gneiss Workspace</h1>
+					<h1 className="text-3xl font-semibold tracking-tight">Gneiss</h1>
 					<p className="text-kumo-subtle mt-2 text-sm">
 						Sign in to access the sidebar + canvas workspace shell.
 					</p>
