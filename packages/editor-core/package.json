@@ -1,0 +1,19 @@
+{
+	"name": "@gneissdotrun/editor-core",
+	"type": "module",
+	"exports": {
+		".": {
+			"default": "./src/index.ts"
+		},
+		"./*": {
+			"default": "./src/*.ts"
+		}
+	},
+	"scripts": {
+		"typecheck": "tsc -b"
+	},
+	"devDependencies": {
+		"@gneissdotrun/config": "workspace:*",
+		"typescript": "catalog:"
+	}
+}

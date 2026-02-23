@@ -1,0 +1,23 @@
+# dependencies (bun install)
+node_modules
+
+# output
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+*.log
+report.*.json
+
+# caches
+.turbo
+*.tsbuildinfo
+
+# Finder (MacOS)
+.DS_Store

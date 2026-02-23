@@ -13,6 +13,7 @@
 		"@cloudflare/kumo": "^1.7.0",
 		"@gneissdotrun/api": "workspace:*",
 		"@gneissdotrun/auth": "workspace:*",
+		"@gneissdotrun/editor-core": "workspace:*",
 		"@gneissdotrun/env": "workspace:*",
 		"@libsql/client": "catalog:",
 		"@orpc/client": "catalog:",
