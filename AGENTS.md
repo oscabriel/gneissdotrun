@@ -14,3 +14,4 @@ Whenever you learn something new that you are asked to remember, that feels cont
 - In `apps/web`, use kebab-case for component filenames (for example, `app-shell.tsx`) and PascalCase for component names inside those files.
 - Running `bun test` against modules that import `agents` may fail in local Bun runtime due unresolved `cloudflare:email`; in tests, mock `agents`/`agents/workflows` before dynamically importing those modules.
 - In `apps/server`, keep `/agents/*` on a single `routeAgentRequest` code path with explicit `404` fallback for non-upgrade HTTP; CORS preflight still succeeds via the global `cors` middleware.
+- After adding a new workspace package, run `bun install` before Turbo commands; otherwise Turbo may warn that the workspace is missing from `bun.lock`.

@@ -185,7 +185,10 @@ function normalizeWikiLinkTarget(input: string): string {
 	return input.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function enforceExistingWikiLinks(markdown: string, candidates: Array<{ id: string; title: string }>): string {
+function enforceExistingWikiLinks(
+	markdown: string,
+	candidates: Array<{ id: string; title: string }>,
+): string {
 	if (markdown.length === 0) {
 		return markdown;
 	}
@@ -1016,7 +1019,7 @@ export async function executeCapture(
 			cleanedInput || request.userInput,
 			undefined,
 			{
-			onProgress: options.onRewriteProgress,
+				onProgress: options.onRewriteProgress,
 			},
 		);
 		const created = await createNote(
@@ -1047,7 +1050,7 @@ export async function executeCapture(
 			request.userInput,
 			note.id,
 			{
-			onProgress: options.onRewriteProgress,
+				onProgress: options.onRewriteProgress,
 			},
 		);
 		const updated = await updateNote(
@@ -1107,12 +1110,12 @@ export async function executeCapture(
 					request.userId,
 					decision,
 					targetNote.content,
-									request.userInput,
+					request.userInput,
 					targetNote.id,
-									{
-										onProgress: options.onRewriteProgress,
-									},
-								);
+					{
+						onProgress: options.onRewriteProgress,
+					},
+				);
 				const updated = await updateNote(
 					env,
 					request.userId,
@@ -1146,9 +1149,17 @@ export async function executeCapture(
 
 				const created: UserNote[] = [];
 				for (const [index, segment] of segments.entries()) {
-					const rewritten = await rewriteNoteContent(env, request.userId, decision, "", segment, undefined, {
-						onProgress: index === 0 ? options.onRewriteProgress : undefined,
-					});
+					const rewritten = await rewriteNoteContent(
+						env,
+						request.userId,
+						decision,
+						"",
+						segment,
+						undefined,
+						{
+							onProgress: index === 0 ? options.onRewriteProgress : undefined,
+						},
+					);
 					created.push(await createNote(env, request.userId, rewritten || segment));
 				}
 
@@ -1184,12 +1195,12 @@ export async function executeCapture(
 					request.userId,
 					decision,
 					targetNote?.content ?? "",
-								cleanedInput || request.userInput,
+					cleanedInput || request.userInput,
 					targetNote?.id,
-								{
-									onProgress: options.onRewriteProgress,
-								},
-							);
+					{
+						onProgress: options.onRewriteProgress,
+					},
+				);
 				const primary = targetNote
 					? await updateNote(
 							env,

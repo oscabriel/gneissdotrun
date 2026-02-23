@@ -398,7 +398,10 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 	);
 
 	const handleSaveNoteContent = useCallback(
-		async (input: { noteId: string; content: string; title?: string }, options?: { silent?: boolean }) => {
+		async (
+			input: { noteId: string; content: string; title?: string },
+			options?: { silent?: boolean },
+		) => {
 			setIsCapturing(true);
 
 			try {

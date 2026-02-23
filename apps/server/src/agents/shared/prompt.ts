@@ -15,7 +15,9 @@ export function buildRewritePrompt(input: RewritePromptInput): string {
 		.slice(0, 20);
 	const wikiLinkGuidance =
 		wikiLinkCandidates.length > 0
-			? wikiLinkCandidates.map((candidate) => `- [[${candidate.title.trim()}]] (id: ${candidate.id})`).join("\n")
+			? wikiLinkCandidates
+					.map((candidate) => `- [[${candidate.title.trim()}]] (id: ${candidate.id})`)
+					.join("\n")
 			: "- No existing notes available for wiki links.";
 
 	return [

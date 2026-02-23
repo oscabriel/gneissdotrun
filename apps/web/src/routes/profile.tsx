@@ -62,7 +62,7 @@ function ProfileRoute() {
 					</div>
 					<div className="border-border bg-background rounded-md border px-3 py-2">
 						<p className="text-muted-foreground text-xs">User ID</p>
-						<p className="break-all font-mono text-xs">{session.user.id}</p>
+						<p className="font-mono text-xs break-all">{session.user.id}</p>
 					</div>
 				</div>
 			</section>

@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
-import { TextAreaField } from "@/components/text-area-field";
+import { MarkdownProjectionEditor } from "@/components/markdown-projection-editor";
 
 interface RewriteProgressUpdate {
 	mode: "append" | "replace";
@@ -207,7 +207,9 @@ export function NoteEditor({
 				await saveInFlightRef.current;
 			}
 
-			const contentToSave = (options?.content ?? stripSlashCommandLines(noteContentRef.current)).trimEnd();
+			const contentToSave = (
+				options?.content ?? stripSlashCommandLines(noteContentRef.current)
+			).trimEnd();
 			const titleToSave = (options?.title ?? titleRef.current).trim() || "Untitled note";
 
 			const isDirty =
@@ -448,11 +450,11 @@ export function NoteEditor({
 			</div>
 
 			{isEditingNote ? (
-				<TextAreaField
+				<MarkdownProjectionEditor
 					label="Note content"
 					tone="document"
 					ref={noteTextareaRef}
-					className="min-h-40 resize-none overflow-hidden pr-14"
+					className="min-h-40 pr-14"
 					rows={1}
 					value={noteContent}
 					onChange={(event) => {
@@ -484,7 +486,7 @@ export function NoteEditor({
 				/>
 			) : (
 				<div
-					className="bg-kumo-base min-h-30 cursor-text rounded-md p-4 pr-14 font-serif text-[15px] leading-7 [&_h1]:mt-1 [&_h1]:text-3xl [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-xl [&_h3]:font-semibold [&_h4]:mt-2 [&_h4]:text-lg [&_h4]:font-semibold [&_p]:my-3 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_strong]:font-semibold"
+					className="bg-kumo-base min-h-30 cursor-text rounded-md p-4 pr-14 font-serif text-[15px] leading-7 [&_h1]:mt-1 [&_h1]:text-3xl [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-xl [&_h3]:font-semibold [&_h4]:mt-2 [&_h4]:text-lg [&_h4]:font-semibold [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_strong]:font-semibold [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6"
 					onClick={(event) => {
 						if ((event.target as HTMLElement).closest("a")) {
 							return;
@@ -499,10 +501,7 @@ export function NoteEditor({
 							rehypePlugins={[rehypeSanitize]}
 							components={{
 								a: ({ ...props }) => (
-									<a
-										{...props}
-										className="text-kumo-link underline underline-offset-2"
-									/>
+									<a {...props} className="text-kumo-link underline underline-offset-2" />
 								),
 							}}
 						>

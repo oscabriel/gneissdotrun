@@ -45,7 +45,7 @@ export interface RewriteStatusDataPart {
 	noteId: string;
 	routeKind: RewriteRouteKind;
 	hint: string;
-        emittedAt: number;
+	emittedAt: number;
 }
 
 export type RewriteTransientDataChunk =
