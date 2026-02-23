@@ -1,11 +1,11 @@
 import { Button, DropdownMenu } from "@cloudflare/kumo";
 import type { KeyboardEvent } from "react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
-import { MarkdownProjectionEditor } from "@/components/markdown-projection-editor";
+import { PmMarkdownEditor } from "@/components/pm-markdown-editor";
 
 interface RewriteProgressUpdate {
 	mode: "append" | "replace";
@@ -174,23 +174,12 @@ export function NoteEditor({
 	const [noteContent, setNoteContent] = useState(stripSlashCommandLines(initialContent));
 	const [isEditingNote, setIsEditingNote] = useState(false);
 
-	const noteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 	const noteContentRef = useRef(stripSlashCommandLines(initialContent));
 	const titleRef = useRef(title);
 	const lastAcknowledgedContentRef = useRef(stripSlashCommandLines(initialContent));
 	const lastAcknowledgedTitleRef = useRef(title);
 	const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const saveInFlightRef = useRef<Promise<boolean> | null>(null);
-
-	const resizeNoteTextarea = useCallback(() => {
-		const textarea = noteTextareaRef.current;
-		if (!textarea) {
-			return;
-		}
-
-		textarea.style.height = "0px";
-		textarea.style.height = `${textarea.scrollHeight}px`;
-	}, []);
 
 	const clearAutosaveTimer = useCallback(() => {
 		if (!autosaveTimerRef.current) {
@@ -322,6 +311,26 @@ export function NoteEditor({
 		[flushSave, noteId, onCapture],
 	);
 
+	const handleEditorKeyDown = useCallback(
+		(event: KeyboardEvent<HTMLElement>) => {
+			if (event.nativeEvent.isComposing) {
+				return;
+			}
+
+			if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+				event.preventDefault();
+				void runCommandIntent("explicit");
+				return;
+			}
+
+			if (event.key === "Escape") {
+				event.preventDefault();
+				setIsEditingNote(false);
+			}
+		},
+		[runCommandIntent],
+	);
+
 	useEffect(() => {
 		const sanitized = stripSlashCommandLines(initialContent);
 
@@ -336,22 +345,6 @@ export function NoteEditor({
 	useEffect(() => {
 		setIsEditingNote(false);
 	}, [noteId]);
-
-	useEffect(() => {
-		if (!isEditingNote) {
-			return;
-		}
-
-		noteTextareaRef.current?.focus();
-	}, [isEditingNote]);
-
-	useLayoutEffect(() => {
-		if (!isEditingNote) {
-			return;
-		}
-
-		resizeNoteTextarea();
-	}, [isEditingNote, noteContent, resizeNoteTextarea]);
 
 	useEffect(() => {
 		clearAutosaveTimer();
@@ -450,38 +443,20 @@ export function NoteEditor({
 			</div>
 
 			{isEditingNote ? (
-				<MarkdownProjectionEditor
+				<PmMarkdownEditor
 					label="Note content"
-					tone="document"
-					ref={noteTextareaRef}
-					className="min-h-40 pr-14"
-					rows={1}
 					value={noteContent}
-					onChange={(event) => {
+					className="min-h-40 pr-14"
+					onChangeMarkdown={(nextMarkdown) => {
 						onEditorInput();
-						setNoteContent(event.target.value);
-						noteContentRef.current = event.target.value;
+						setNoteContent(nextMarkdown);
+						noteContentRef.current = nextMarkdown;
 					}}
 					onBlur={() => {
 						setIsEditingNote(false);
 						void flushSave({ silent: true });
 					}}
-					onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
-						if (event.nativeEvent.isComposing) {
-							return;
-						}
-
-						if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-							event.preventDefault();
-							void runCommandIntent("explicit");
-							return;
-						}
-
-						if (event.key === "Escape") {
-							event.preventDefault();
-							setIsEditingNote(false);
-						}
-					}}
+					onKeyDown={handleEditorKeyDown}
 					placeholder="Write your note. Add slash commands like /summarize on separate lines."
 				/>
 			) : (

@@ -74,3 +74,41 @@
 		@apply bg-kumo-elevated text-kumo-default antialiased;
 	}
 }
+
+@layer components {
+	.ProseMirror {
+		@apply min-h-40 break-words whitespace-pre-wrap font-serif text-[15px] leading-7;
+	}
+
+	.ProseMirror p {
+		@apply my-3;
+	}
+
+	.ProseMirror h1 {
+		@apply mt-1 text-3xl font-semibold;
+	}
+
+	.ProseMirror h2 {
+		@apply mt-3 text-2xl font-semibold;
+	}
+
+	.ProseMirror h3 {
+		@apply mt-2 text-xl font-semibold;
+	}
+
+	.ProseMirror h4 {
+		@apply mt-2 text-lg font-semibold;
+	}
+
+	.ProseMirror ul {
+		@apply my-3 list-disc pl-6;
+	}
+
+	.ProseMirror ol {
+		@apply my-3 list-decimal pl-6;
+	}
+
+	.ProseMirror .pm-editor-active-line {
+		@apply bg-kumo-overlay/80;
+	}
+}
