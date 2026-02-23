@@ -12,8 +12,16 @@
 	"scripts": {
 		"typecheck": "tsc -b"
 	},
+	"dependencies": {
+		"mdast-util-gfm": "^3.1.0",
+		"mdast-util-to-markdown": "^2.1.2",
+		"remark-gfm": "^4.0.1",
+		"remark-parse": "^11.0.0",
+		"unified": "^11.0.5"
+	},
 	"devDependencies": {
 		"@gneissdotrun/config": "workspace:*",
+		"@types/mdast": "^4.0.4",
 		"typescript": "catalog:"
 	}
 }
