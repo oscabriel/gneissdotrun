@@ -50,6 +50,14 @@ function sortByUpdatedAtDesc<T extends { updatedAt: number }>(items: T[]): T[] {
 	return [...items].sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
+function summarizeContent(content: string): string {
+	return content.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function upsertSidebarNote(notes: SidebarNote[], note: SidebarNote): SidebarNote[] {
+	return sortByUpdatedAtDesc([note, ...notes.filter((existing) => existing.id !== note.id)]);
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
 	if (!(target instanceof HTMLElement)) {
 		return false;
@@ -66,6 +74,19 @@ function isTypingTarget(target: EventTarget | null): boolean {
 	return Boolean(target.closest('[contenteditable="true"], [role="textbox"]'));
 }
 
+type ThemeMode = "light" | "dark";
+
+const THEME_STORAGE_KEY = "theme";
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "workspace-sidebar-collapsed";
+
+function readThemeMode(): ThemeMode {
+	if (typeof document === "undefined") {
+		return "light";
+	}
+
+	return document.documentElement.getAttribute("data-mode") === "dark" ? "dark" : "light";
+}
+
 export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: WorkspaceShellProps) {
 	const navigate = useNavigate();
 	const ephemeralTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,6 +96,9 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 	const [apiError, setApiError] = useState<string | null>(null);
 	const [isCapturing, setIsCapturing] = useState(false);
 	const [ephemeralContent, setEphemeralContent] = useState<string | null>(null);
+	const [themeMode, setThemeMode] = useState<ThemeMode>("light");
+	const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+	const [isSidebarPreferenceReady, setIsSidebarPreferenceReady] = useState(false);
 
 	const clearEphemeral = useCallback(() => {
 		if (ephemeralTimerRef.current) {
@@ -136,6 +160,24 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 	}, [fetchApiNotes]);
 
 	useEffect(() => {
+		setThemeMode(readThemeMode());
+		if (typeof window === "undefined") {
+			setIsSidebarPreferenceReady(true);
+			return;
+		}
+
+		setIsSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1");
+		setIsSidebarPreferenceReady(true);
+	}, []);
+
+	useEffect(() => {
+		if (!isSidebarPreferenceReady || typeof window === "undefined") {
+			return;
+		}
+		window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, isSidebarCollapsed ? "1" : "0");
+	}, [isSidebarCollapsed, isSidebarPreferenceReady]);
+
+	useEffect(() => {
 		return () => {
 			if (ephemeralTimerRef.current) {
 				clearTimeout(ephemeralTimerRef.current);
@@ -170,10 +212,16 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 			return sortByUpdatedAtDesc(
 				indexNotes.map((note) => {
 					const hydrated = apiNotesById.get(note.id);
+					if (!hydrated) {
+						return note;
+					}
+
 					return {
 						...note,
-						content: hydrated?.content ?? note.content,
-						summary: hydrated?.summary ?? note.summary,
+						title: hydrated.title,
+						content: hydrated.content,
+						summary: hydrated.summary,
+						updatedAt: Math.max(note.updatedAt, hydrated.updatedAt),
 					};
 				}),
 			);
@@ -402,7 +450,9 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 			input: { noteId: string; content: string; title?: string },
 			options?: { silent?: boolean },
 		) => {
-			setIsCapturing(true);
+			if (!options?.silent) {
+				setIsCapturing(true);
+			}
 
 			try {
 				const response = await fetch(`${env.VITE_SERVER_URL}/api/notes/${input.noteId}`, {
@@ -422,7 +472,26 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 					throw new Error(payload.error ?? "Failed to save note content");
 				}
 
-				await fetchApiNotes();
+				const payload = (await response.json()) as {
+					note: {
+						id: string;
+						title: string;
+						content: string;
+						updatedAt: number;
+						summary?: string;
+					};
+				};
+
+				setApiNotes((current) =>
+					upsertSidebarNote(current, {
+						id: payload.note.id,
+						title: payload.note.title,
+						content: payload.note.content,
+						summary: payload.note.summary ?? summarizeContent(payload.note.content),
+						updatedAt: payload.note.updatedAt,
+					}),
+				);
+
 				if (!options?.silent) {
 					toast.success("Saved note.");
 				}
@@ -432,10 +501,12 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 				}
 				throw error;
 			} finally {
-				setIsCapturing(false);
+				if (!options?.silent) {
+					setIsCapturing(false);
+				}
 			}
 		},
-		[fetchApiNotes],
+		[],
 	);
 
 	const handleRestoreNote = useCallback(
@@ -494,9 +565,91 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		},
 		[fetchApiNotes, handleRestoreNote, onSelectNoteId, selectedNoteId],
 	);
+
+	const handleRunOrganization = useCallback(async ({ noteId }: { noteId?: string }) => {
+		setIsCapturing(true);
+
+		try {
+			const response = await fetch(`${env.VITE_SERVER_URL}/api/collections/lifecycle`, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+				},
+				credentials: "include",
+				body: JSON.stringify({
+					action: "run_organize",
+					noteIds: noteId ? [noteId] : undefined,
+				}),
+			});
+
+			if (!response.ok) {
+				const payload = (await response.json()) as { error?: string };
+				throw new Error(payload.error ?? "Failed to trigger organization");
+			}
+
+			toast.success(
+				noteId ? "Organization refresh queued for this note." : "Organization refresh queued.",
+			);
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : "Failed to trigger organization");
+			throw error;
+		} finally {
+			setIsCapturing(false);
+		}
+	}, []);
+
+	const handleRunFanOut = useCallback(
+		async ({ noteId, content }: { noteId: string; content: string }) => {
+			setIsCapturing(true);
+
+			try {
+				const response = await fetch(`${env.VITE_SERVER_URL}/api/workflows/fanout/run`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+					},
+					credentials: "include",
+					body: JSON.stringify({
+						sourceNoteId: noteId,
+						input: content,
+					}),
+				});
+
+				if (!response.ok) {
+					const payload = (await response.json()) as { error?: string };
+					throw new Error(payload.error ?? "Failed to trigger fan-out workflow");
+				}
+
+				toast.success("Fan-out workflow queued.");
+			} catch (error) {
+				toast.error(error instanceof Error ? error.message : "Failed to trigger fan-out workflow");
+				throw error;
+			} finally {
+				setIsCapturing(false);
+			}
+		},
+		[],
+	);
 	const handleCanvasInput = useCallback(() => {
 		clearEphemeral();
 	}, [clearEphemeral]);
+
+	const toggleThemeMode = useCallback(() => {
+		const current = readThemeMode();
+		const nextMode: ThemeMode = current === "dark" ? "light" : "dark";
+		setThemeMode(nextMode);
+
+		if (typeof document !== "undefined") {
+			document.documentElement.setAttribute("data-mode", nextMode);
+		}
+		if (typeof window !== "undefined") {
+			window.localStorage.setItem(THEME_STORAGE_KEY, nextMode);
+		}
+	}, []);
+
+	const toggleSidebar = useCallback(() => {
+		setIsSidebarCollapsed((current) => !current);
+	}, []);
 
 	useEffect(() => {
 		const listener = (event: KeyboardEvent) => {
@@ -528,6 +681,8 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 
 	return (
 		<AppShell
+			sidebarCollapsed={isSidebarCollapsed}
+			sidebarId="notes-sidebar-panel"
 			header={
 				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<div className="space-y-1">
@@ -560,6 +715,23 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 						>
 							Profile
 						</Button>
+						<Button
+							size="base"
+							variant="outline"
+							onClick={toggleSidebar}
+							aria-controls="notes-sidebar-panel"
+							aria-expanded={!isSidebarCollapsed}
+						>
+							{isSidebarCollapsed ? "Show Notes" : "Hide Notes"}
+						</Button>
+						<Button
+							size="base"
+							variant="outline"
+							onClick={toggleThemeMode}
+							aria-label={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
+						>
+							{themeMode === "dark" ? "Light" : "Dark"}
+						</Button>
 
 						<DropdownMenu>
 							<DropdownMenu.Trigger render={<Button size="base" variant="outline" />}>
@@ -582,6 +754,13 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 										}}
 									>
 										Weekly digest
+									</DropdownMenu.Item>
+									<DropdownMenu.Item
+										onClick={() => {
+											void navigate({ to: "/contradictions" });
+										}}
+									>
+										Contradictions review
 									</DropdownMenu.Item>
 									<DropdownMenu.Item
 										onClick={() => {
@@ -617,6 +796,8 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 					onCapture={handleCapture}
 					onSaveNoteContent={handleSaveNoteContent}
 					onArchiveNote={handleArchiveNote}
+					onRunOrganization={handleRunOrganization}
+					onRunFanOut={handleRunFanOut}
 					isCapturing={isCapturing}
 					ephemeralContent={ephemeralContent}
 					onCanvasInput={handleCanvasInput}

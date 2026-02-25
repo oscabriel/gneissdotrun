@@ -4,9 +4,6 @@ import {
 	pmDocToMarkdown,
 } from "@gneissdotrun/editor-pm";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { Extension } from "@tiptap/core";
-import { Plugin } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { useEffect, useMemo, useRef, type KeyboardEventHandler } from "react";
 
 import { reportEditorError, reportEditorTelemetry } from "@/lib/editor-telemetry";
@@ -17,62 +14,31 @@ interface PmMarkdownEditorProps {
 	value: string;
 	placeholder?: string;
 	className?: string;
+	autoFocus?: boolean;
 	onChangeMarkdown: (value: string) => void;
 	onBlur?: () => void;
+	onRunShortcut?: () => void;
 	onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
 }
 
-const ACTIVE_LINE_CLASS = "pm-editor-active-line";
 const PARSE_WARN_THRESHOLD_MS = 12;
-
-const ActiveLineExtension = Extension.create({
-	name: "activeLineDecoration",
-	addProseMirrorPlugins() {
-		return [
-			new Plugin({
-				props: {
-					decorations: (state) => {
-						if (!state.selection.empty) {
-							return DecorationSet.empty;
-						}
-
-						const $from = state.selection.$from;
-						for (let depth = $from.depth; depth > 0; depth -= 1) {
-							const node = $from.node(depth);
-							if (!node.isTextblock) {
-								continue;
-							}
-							const from = $from.start(depth) - 1;
-							const to = from + node.nodeSize;
-							return DecorationSet.create(state.doc, [
-								Decoration.node(from, to, {
-									class: ACTIVE_LINE_CLASS,
-								}),
-							]);
-						}
-
-						return DecorationSet.empty;
-					},
-				},
-			}),
-		];
-	},
-});
 
 export function PmMarkdownEditor({
 	label,
 	value,
 	placeholder,
 	className,
+	autoFocus,
 	onChangeMarkdown,
 	onBlur,
+	onRunShortcut,
 	onKeyDown,
 }: PmMarkdownEditorProps) {
 	const lastAppliedValueRef = useRef(value);
 	const initialDoc = useMemo(() => markdownToPmDoc(value), [value]);
 
 	const editor = useEditor({
-		extensions: [...createEditorPmExtensions(), ActiveLineExtension],
+		extensions: createEditorPmExtensions(),
 		content: initialDoc,
 		editorProps: {
 			attributes: {
@@ -80,9 +46,21 @@ export function PmMarkdownEditor({
 					"prose prose-neutral min-h-40 max-w-none outline-none",
 					"[&_.pm-rollover-delimiter]:text-kumo-subtle [&_.pm-rollover-delimiter]:opacity-75",
 					"[&_.pm-fake-selection]:bg-kumo-tint/60",
-					"[&_.pm-editor-active-line]:ring-kumo-line/30 [&_.pm-editor-active-line]:rounded-sm [&_.pm-editor-active-line]:ring-1",
 				),
 				"aria-label": label,
+			},
+			handleKeyDown: (_view, event) => {
+				if (event.isComposing) {
+					return false;
+				}
+
+				if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+					event.preventDefault();
+					onRunShortcut?.();
+					return true;
+				}
+
+				return false;
 			},
 		},
 		onUpdate: ({ editor: currentEditor }) => {
@@ -130,21 +108,24 @@ export function PmMarkdownEditor({
 		}
 	}, [editor, value]);
 
+	useEffect(() => {
+		if (!editor || !autoFocus) {
+			return;
+		}
+
+		editor.commands.focus("end");
+	}, [autoFocus, editor]);
+
 	if (!editor) {
 		return (
-			<div
-				className={cn(
-					"border-kumo-line bg-kumo-base text-kumo-subtle min-h-40 rounded-md border p-4",
-					className,
-				)}
-			>
+			<div className={cn("bg-kumo-base text-kumo-subtle min-h-40 p-4", className)}>
 				{placeholder ?? "Loading editor..."}
 			</div>
 		);
 	}
 
 	return (
-		<div className={cn("border-kumo-line bg-kumo-base rounded-md border p-4", className)}>
+		<div className={cn("bg-kumo-base min-h-40 p-4", className)}>
 			<EditorContent editor={editor} onKeyDown={onKeyDown} />
 		</div>
 	);

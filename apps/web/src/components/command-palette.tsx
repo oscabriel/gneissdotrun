@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 
 export type WorkspacePaletteAction =
 	| { kind: "run"; command: string }
-	| { kind: "navigation"; to: "/collections" | "/digest" | "/history" };
+	| { kind: "workflow"; workflow: "organize" | "fan_out" }
+	| { kind: "navigation"; to: "/collections" | "/digest" | "/history" | "/contradictions" };
 
 interface CommandPaletteProps {
 	onSelectAction?: (action: WorkspacePaletteAction) => void;
@@ -48,6 +49,20 @@ const paletteItems: PaletteItem[] = [
 		shortcutHint: "Run",
 	},
 	{
+		id: "workflow-organize",
+		title: "Run organization now",
+		description: "Trigger organization refresh for pending notes",
+		action: { kind: "workflow", workflow: "organize" },
+		shortcutHint: "Workflow",
+	},
+	{
+		id: "workflow-fanout",
+		title: "Run fan-out from active note",
+		description: "Trigger the fan-out workflow using the current note",
+		action: { kind: "workflow", workflow: "fan_out" },
+		shortcutHint: "Workflow",
+	},
+	{
 		id: "nav-history",
 		title: "Open note history",
 		description: "Open history for the current note",
@@ -66,6 +81,13 @@ const paletteItems: PaletteItem[] = [
 		title: "Open weekly digest",
 		description: "Open periodic summary review",
 		action: { kind: "navigation", to: "/digest" },
+		shortcutHint: "Go",
+	},
+	{
+		id: "nav-contradictions",
+		title: "Open contradictions review",
+		description: "Review and resolve open contradiction candidates",
+		action: { kind: "navigation", to: "/contradictions" },
 		shortcutHint: "Go",
 	},
 ];

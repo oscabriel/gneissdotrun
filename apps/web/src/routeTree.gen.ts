@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as DigestRouteImport } from './routes/digest'
+import { Route as ContradictionsRouteImport } from './routes/contradictions'
 import { Route as CollectionsRouteImport } from './routes/collections'
 import { Route as IndexRouteImport } from './routes/index'
 
@@ -30,6 +31,11 @@ const DigestRoute = DigestRouteImport.update({
   path: '/digest',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ContradictionsRoute = ContradictionsRouteImport.update({
+  id: '/contradictions',
+  path: '/contradictions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CollectionsRoute = CollectionsRouteImport.update({
   id: '/collections',
   path: '/collections',
@@ -44,6 +50,7 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/collections': typeof CollectionsRoute
+  '/contradictions': typeof ContradictionsRoute
   '/digest': typeof DigestRoute
   '/history': typeof HistoryRoute
   '/profile': typeof ProfileRoute
@@ -51,6 +58,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/collections': typeof CollectionsRoute
+  '/contradictions': typeof ContradictionsRoute
   '/digest': typeof DigestRoute
   '/history': typeof HistoryRoute
   '/profile': typeof ProfileRoute
@@ -59,21 +67,42 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/collections': typeof CollectionsRoute
+  '/contradictions': typeof ContradictionsRoute
   '/digest': typeof DigestRoute
   '/history': typeof HistoryRoute
   '/profile': typeof ProfileRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/collections' | '/digest' | '/history' | '/profile'
+  fullPaths:
+    | '/'
+    | '/collections'
+    | '/contradictions'
+    | '/digest'
+    | '/history'
+    | '/profile'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/collections' | '/digest' | '/history' | '/profile'
-  id: '__root__' | '/' | '/collections' | '/digest' | '/history' | '/profile'
+  to:
+    | '/'
+    | '/collections'
+    | '/contradictions'
+    | '/digest'
+    | '/history'
+    | '/profile'
+  id:
+    | '__root__'
+    | '/'
+    | '/collections'
+    | '/contradictions'
+    | '/digest'
+    | '/history'
+    | '/profile'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CollectionsRoute: typeof CollectionsRoute
+  ContradictionsRoute: typeof ContradictionsRoute
   DigestRoute: typeof DigestRoute
   HistoryRoute: typeof HistoryRoute
   ProfileRoute: typeof ProfileRoute
@@ -102,6 +131,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DigestRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/contradictions': {
+      id: '/contradictions'
+      path: '/contradictions'
+      fullPath: '/contradictions'
+      preLoaderRoute: typeof ContradictionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/collections': {
       id: '/collections'
       path: '/collections'
@@ -122,6 +158,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CollectionsRoute: CollectionsRoute,
+  ContradictionsRoute: ContradictionsRoute,
   DigestRoute: DigestRoute,
   HistoryRoute: HistoryRoute,
   ProfileRoute: ProfileRoute,

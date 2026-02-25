@@ -77,16 +77,20 @@ mock.module("@/components/pm-markdown-editor", () => {
 		value,
 		placeholder,
 		className,
+		autoFocus,
 		onChangeMarkdown,
 		onBlur,
+		onRunShortcut,
 		onKeyDown,
 	}: {
 		label: string;
 		value: string;
 		placeholder?: string;
 		className?: string;
+		autoFocus?: boolean;
 		onChangeMarkdown: (value: string) => void;
 		onBlur?: () => void;
+		onRunShortcut?: () => void;
 		onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
 	}) => (
 		<input
@@ -94,11 +98,20 @@ mock.module("@/components/pm-markdown-editor", () => {
 			value={value}
 			placeholder={placeholder}
 			className={className}
+			autoFocus={autoFocus}
 			onChange={(event) => {
 				onChangeMarkdown(event.target.value);
 			}}
+			onInput={(event) => {
+				onChangeMarkdown((event.target as HTMLInputElement).value);
+			}}
 			onBlur={onBlur}
-			onKeyDown={onKeyDown as React.KeyboardEventHandler<HTMLInputElement>}
+			onKeyDown={(event) => {
+				onKeyDown?.(event as unknown as React.KeyboardEvent<HTMLDivElement>);
+				if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+					onRunShortcut?.();
+				}
+			}}
 		/>
 	);
 
@@ -146,16 +159,91 @@ function renderEditor(overrides?: Partial<ComponentProps<typeof NoteEditor>>) {
 }
 
 describe("note editor runtime integration", () => {
-	it("switches between rendered and edit states seamlessly", async () => {
+	it("keeps the editor mounted after blur", async () => {
 		const view = renderEditor();
 
-		fireEvent.click(view.getByText("Initial note"));
-		const textarea = await view.findByLabelText("Note content");
-		fireEvent.change(textarea, { target: { value: "Updated line" } });
-		fireEvent.blur(textarea);
+		const input = await view.findByLabelText("Note content");
+		fireEvent.change(input, { target: { value: "Updated line" } });
+		fireEvent.blur(input);
 
 		await waitFor(() => {
-			expect(view.queryByLabelText("Note content")).toBeNull();
+			expect(view.getByLabelText("Note content")).toBeTruthy();
+		});
+	});
+
+	it("does not clobber unsaved local edits when props refresh for the same note", async () => {
+		const view = renderEditor({
+			noteId: "note-1",
+			initialContent: "Server draft",
+			title: "Server title",
+		});
+
+		const input = await view.findByLabelText("Note content");
+		fireEvent.input(input, { target: { value: "Local unsaved draft" } });
+
+		await waitFor(() => {
+			expect((view.getByLabelText("Note content") as HTMLInputElement).value).toBe(
+				"Local unsaved draft",
+			);
+		});
+
+		view.rerender(
+			<NoteEditor
+				{...view.props}
+				noteId="note-1"
+				title="Server title (updated)"
+				initialContent="Server draft (updated remotely)"
+			/>,
+		);
+
+		expect((view.getByLabelText("Note content") as HTMLInputElement).value).toBe(
+			"Local unsaved draft",
+		);
+	});
+
+	it("opens directly in edit mode for empty notes", async () => {
+		const view = renderEditor({
+			initialContent: "",
+		});
+
+		expect(await view.findByLabelText("Note content")).toBeTruthy();
+	});
+
+	it("routes Cmd+Enter through capture for regular note content", async () => {
+		const view = renderEditor({
+			initialContent: "Capture this paragraph",
+		});
+
+		const input = await view.findByLabelText("Note content");
+		fireEvent.focus(input);
+		fireEvent.keyDown(input, {
+			key: "Enter",
+			code: "Enter",
+			ctrlKey: true,
+		});
+
+		await waitFor(() => {
+			expect(view.onCapture).toHaveBeenCalledTimes(1);
+			expect(view.onCapture).toHaveBeenCalledWith(
+				{ noteId: "note-1", userInput: "Capture this paragraph" },
+				expect.any(Object),
+			);
+		});
+	});
+
+	it("routes Run button through capture", async () => {
+		const view = renderEditor({
+			initialContent: "Run this note",
+		});
+
+		fireEvent.click(view.getByText("Run"));
+
+		await waitFor(() => {
+			expect(view.onCapture).toHaveBeenCalledTimes(1);
+			expect(view.onCapture).toHaveBeenCalledWith(
+				{ noteId: "note-1", userInput: "Run this note" },
+				expect.any(Object),
+			);
 		});
 	});
 
@@ -173,11 +261,10 @@ describe("note editor runtime integration", () => {
 			expect(onCapture).toHaveBeenCalledTimes(1);
 		});
 
-		fireEvent.click(view.getByText("No note content yet."));
 		const input = await view.findByLabelText("Note content");
 		fireEvent.blur(input);
 		await waitFor(() => {
-			expect(view.queryByLabelText("Note content")).toBeNull();
+			expect(view.getByLabelText("Note content")).toBeTruthy();
 		});
 	});
 });

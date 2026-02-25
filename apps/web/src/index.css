@@ -108,7 +108,4 @@
 		@apply my-3 list-decimal pl-6;
 	}
 
-	.ProseMirror .pm-editor-active-line {
-		@apply bg-kumo-overlay/80;
-	}
 }

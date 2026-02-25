@@ -8,9 +8,18 @@ interface AppShellProps {
 	sidebar: ReactNode;
 	main: ReactNode;
 	className?: string;
+	sidebarCollapsed?: boolean;
+	sidebarId?: string;
 }
 
-export function AppShell({ header, sidebar, main, className }: AppShellProps) {
+export function AppShell({
+	header,
+	sidebar,
+	main,
+	className,
+	sidebarCollapsed = false,
+	sidebarId,
+}: AppShellProps) {
 	return (
 		<div
 			className={cn(
@@ -20,10 +29,17 @@ export function AppShell({ header, sidebar, main, className }: AppShellProps) {
 		>
 			<header className="px-1 pb-1 sm:px-2">{header}</header>
 
-			<div className="grid flex-1 gap-3 lg:grid-cols-[22rem_minmax(0,1fr)]">
-				<Surface as="aside" className="order-2 p-4 lg:order-1">
-					{sidebar}
-				</Surface>
+			<div
+				className={cn(
+					"grid flex-1 gap-3",
+					sidebarCollapsed ? "lg:grid-cols-[minmax(0,1fr)]" : "lg:grid-cols-[22rem_minmax(0,1fr)]",
+				)}
+			>
+				{!sidebarCollapsed ? (
+					<Surface as="aside" id={sidebarId} className="order-2 p-4 lg:order-1">
+						{sidebar}
+					</Surface>
+				) : null}
 
 				<Surface as="section" className="order-1 p-4 sm:p-6 lg:order-2">
 					{main}

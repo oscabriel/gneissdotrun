@@ -1,9 +1,5 @@
 import { Button, DropdownMenu } from "@cloudflare/kumo";
-import type { KeyboardEvent } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { PmMarkdownEditor } from "@/components/pm-markdown-editor";
 
@@ -41,12 +37,19 @@ interface SlashInstruction {
 	raw: string;
 }
 
-const WIKI_LINK_PATTERN = /\[\[([^\]]+)\]\]/g;
 const SLASH_COMMAND_LINE_PATTERN = /^\s*\/[a-z-]+(?:\s+.*)?\s*$/i;
 const AUTOSAVE_DELAY_MS = 1000;
 
 const EDITOR_FORMATTING_COMMANDS = new Set(["heading", "code", "quote", "bullets"]);
 const AGENT_COMMANDS = new Set(["ask", "research", "link", "summarize"]);
+
+function normalizeDraftContent(input: string): string {
+	return stripSlashCommandLines(input).trimEnd();
+}
+
+function normalizeDraftTitle(input: string): string {
+	return input.trim() || "Untitled note";
+}
 
 function extractSlashCommandLines(input: string): string[] {
 	return input
@@ -148,17 +151,6 @@ function applyEditorFormatting(current: string, commandName: string, argument: s
 	}
 }
 
-function toRenderableMarkdown(input: string): string {
-	return input.replace(WIKI_LINK_PATTERN, (_fullMatch, label: string) => {
-		const normalized = label.trim();
-		if (!normalized) {
-			return "";
-		}
-
-		return `[[${normalized}]](/collections?query=${encodeURIComponent(normalized)})`;
-	});
-}
-
 export function NoteEditor({
 	noteId,
 	title,
@@ -170,14 +162,17 @@ export function NoteEditor({
 	isCapturing,
 	externalRunRequest,
 }: NoteEditorProps) {
-	const [noteTitle, setNoteTitle] = useState(title);
-	const [noteContent, setNoteContent] = useState(stripSlashCommandLines(initialContent));
-	const [isEditingNote, setIsEditingNote] = useState(false);
+	const sanitizedInitialContent = normalizeDraftContent(initialContent);
+	const normalizedInitialTitle = normalizeDraftTitle(title);
 
-	const noteContentRef = useRef(stripSlashCommandLines(initialContent));
-	const titleRef = useRef(title);
-	const lastAcknowledgedContentRef = useRef(stripSlashCommandLines(initialContent));
-	const lastAcknowledgedTitleRef = useRef(title);
+	const [noteTitle, setNoteTitle] = useState(normalizedInitialTitle);
+	const [noteContent, setNoteContent] = useState(sanitizedInitialContent);
+
+	const noteContentRef = useRef(sanitizedInitialContent);
+	const titleRef = useRef(normalizedInitialTitle);
+	const lastAcknowledgedContentRef = useRef(sanitizedInitialContent);
+	const lastAcknowledgedTitleRef = useRef(normalizedInitialTitle);
+	const syncedNoteIdRef = useRef(noteId);
 	const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const saveInFlightRef = useRef<Promise<boolean> | null>(null);
 
@@ -196,32 +191,34 @@ export function NoteEditor({
 				await saveInFlightRef.current;
 			}
 
-			const contentToSave = (
-				options?.content ?? stripSlashCommandLines(noteContentRef.current)
-			).trimEnd();
-			const titleToSave = (options?.title ?? titleRef.current).trim() || "Untitled note";
+			const contentToSave = normalizeDraftContent(options?.content ?? noteContentRef.current);
+			const titleToSave = normalizeDraftTitle(options?.title ?? titleRef.current);
+			const hasExplicitTitleOverride = options?.title !== undefined;
 
 			const isDirty =
 				contentToSave !== lastAcknowledgedContentRef.current ||
-				titleToSave !== lastAcknowledgedTitleRef.current;
+				(hasExplicitTitleOverride && titleToSave !== lastAcknowledgedTitleRef.current);
 			if (!isDirty) {
 				return false;
 			}
 
 			const savePromise = (async () => {
 				try {
-					await onSaveNoteContent(
-						{
-							noteId,
-							content: contentToSave,
-							title: titleToSave,
-						},
-						{ silent: options?.silent ?? true },
-					);
+					const saveInput: { noteId: string; content: string; title?: string } = {
+						noteId,
+						content: contentToSave,
+					};
+					if (hasExplicitTitleOverride) {
+						saveInput.title = titleToSave;
+					}
+
+					await onSaveNoteContent(saveInput, { silent: options?.silent ?? true });
 					lastAcknowledgedContentRef.current = contentToSave;
-					lastAcknowledgedTitleRef.current = titleToSave;
-					titleRef.current = titleToSave;
-					setNoteTitle(titleToSave);
+					if (hasExplicitTitleOverride) {
+						lastAcknowledgedTitleRef.current = titleToSave;
+						titleRef.current = titleToSave;
+						setNoteTitle(titleToSave);
+					}
 					return true;
 				} catch {
 					return false;
@@ -241,13 +238,6 @@ export function NoteEditor({
 			const pendingCommands = forcedCommand
 				? [forcedCommand]
 				: extractSlashCommandLines(noteContentRef.current);
-			if (pendingCommands.length === 0) {
-				if (source === "explicit") {
-					await flushSave({ silent: false });
-				}
-				return;
-			}
-
 			const baselineContent = stripSlashCommandLines(noteContentRef.current);
 			let transformedContent = baselineContent;
 			const captureCommands: string[] = [];
@@ -274,10 +264,22 @@ export function NoteEditor({
 			await flushSave({
 				silent: source === "close",
 				content: transformedContent,
-				title: titleRef.current,
 			});
 
-			if (captureCommands.length === 0) {
+			const shouldRunCapture = source === "explicit" || captureCommands.length > 0;
+			if (!shouldRunCapture) {
+				return;
+			}
+
+			let userInput = captureCommands.join("\n").trim();
+			if (userInput.length === 0 && source === "explicit") {
+				userInput = transformedContent.trim();
+			}
+
+			if (userInput.length === 0) {
+				if (source === "explicit") {
+					await flushSave({ silent: false });
+				}
 				return;
 			}
 
@@ -288,7 +290,7 @@ export function NoteEditor({
 				await onCapture(
 					{
 						noteId,
-						userInput: captureCommands.join("\n"),
+						userInput,
 					},
 					{
 						onRewriteProgress: (update) => {
@@ -306,45 +308,41 @@ export function NoteEditor({
 					setNoteContent(transformedContent);
 					noteContentRef.current = transformedContent;
 				}
+
+				if (source === "explicit") {
+					await flushSave({
+						silent: false,
+						content: transformedContent,
+					});
+				}
 			}
 		},
 		[flushSave, noteId, onCapture],
 	);
 
-	const handleEditorKeyDown = useCallback(
-		(event: KeyboardEvent<HTMLElement>) => {
-			if (event.nativeEvent.isComposing) {
-				return;
-			}
-
-			if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-				event.preventDefault();
-				void runCommandIntent("explicit");
-				return;
-			}
-
-			if (event.key === "Escape") {
-				event.preventDefault();
-				setIsEditingNote(false);
-			}
-		},
-		[runCommandIntent],
-	);
-
 	useEffect(() => {
-		const sanitized = stripSlashCommandLines(initialContent);
+		const sanitized = normalizeDraftContent(initialContent);
+		const normalizedTitle = normalizeDraftTitle(title);
+		const isNoteSwitch = syncedNoteIdRef.current !== noteId;
 
-		setNoteTitle(title);
-		titleRef.current = title;
-		lastAcknowledgedTitleRef.current = title;
+		if (!isNoteSwitch) {
+			const hasUnsavedLocalChanges =
+				normalizeDraftContent(noteContentRef.current) !== lastAcknowledgedContentRef.current ||
+				normalizeDraftTitle(titleRef.current) !== lastAcknowledgedTitleRef.current;
+			if (hasUnsavedLocalChanges || saveInFlightRef.current) {
+				return;
+			}
+		}
+
+		syncedNoteIdRef.current = noteId;
+		setNoteTitle(normalizedTitle);
+		titleRef.current = normalizedTitle;
+		lastAcknowledgedTitleRef.current = normalizedTitle;
 		setNoteContent(sanitized);
 		noteContentRef.current = sanitized;
 		lastAcknowledgedContentRef.current = sanitized;
 	}, [initialContent, noteId, title]);
 
-	useEffect(() => {
-		setIsEditingNote(false);
-	}, [noteId]);
 
 	useEffect(() => {
 		clearAutosaveTimer();
@@ -377,7 +375,6 @@ export function NoteEditor({
 		};
 	}, [clearAutosaveTimer, flushSave, runCommandIntent]);
 
-	const markdownContent = useMemo(() => toRenderableMarkdown(noteContent), [noteContent]);
 
 	const handleRename = async () => {
 		const nextTitle = window.prompt("Rename note", titleRef.current);
@@ -402,7 +399,18 @@ export function NoteEditor({
 
 	return (
 		<div className="relative">
-			<div className="absolute top-0 right-0 z-10">
+			<div className="absolute top-0 right-0 z-10 flex items-center gap-1">
+				<Button
+					size="sm"
+					variant="outline"
+					disabled={isCapturing}
+					onClick={() => {
+						onEditorInput();
+						void runCommandIntent("explicit");
+					}}
+				>
+					Run
+				</Button>
 				<DropdownMenu>
 					<DropdownMenu.Trigger
 						render={
@@ -442,51 +450,24 @@ export function NoteEditor({
 				</DropdownMenu>
 			</div>
 
-			{isEditingNote ? (
-				<PmMarkdownEditor
-					label="Note content"
-					value={noteContent}
-					className="min-h-40 pr-14"
-					onChangeMarkdown={(nextMarkdown) => {
-						onEditorInput();
-						setNoteContent(nextMarkdown);
-						noteContentRef.current = nextMarkdown;
-					}}
-					onBlur={() => {
-						setIsEditingNote(false);
-						void flushSave({ silent: true });
-					}}
-					onKeyDown={handleEditorKeyDown}
-					placeholder="Write your note. Add slash commands like /summarize on separate lines."
-				/>
-			) : (
-				<div
-					className="bg-kumo-base min-h-30 cursor-text rounded-md p-4 pr-14 font-serif text-[15px] leading-7 [&_h1]:mt-1 [&_h1]:text-3xl [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-xl [&_h3]:font-semibold [&_h4]:mt-2 [&_h4]:text-lg [&_h4]:font-semibold [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_strong]:font-semibold [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6"
-					onClick={(event) => {
-						if ((event.target as HTMLElement).closest("a")) {
-							return;
-						}
-						onEditorInput();
-						setIsEditingNote(true);
-					}}
-				>
-					{noteContent.trim().length > 0 ? (
-						<ReactMarkdown
-							remarkPlugins={[remarkGfm]}
-							rehypePlugins={[rehypeSanitize]}
-							components={{
-								a: ({ ...props }) => (
-									<a {...props} className="text-kumo-link underline underline-offset-2" />
-								),
-							}}
-						>
-							{markdownContent}
-						</ReactMarkdown>
-					) : (
-						"No note content yet."
-					)}
-				</div>
-			)}
+			<PmMarkdownEditor
+				label="Note content"
+				value={noteContent}
+				autoFocus
+				className="min-h-40 pr-28"
+				onChangeMarkdown={(nextMarkdown) => {
+					onEditorInput();
+					setNoteContent(nextMarkdown);
+					noteContentRef.current = nextMarkdown;
+				}}
+				onBlur={() => {
+					void flushSave({ silent: true });
+				}}
+				onRunShortcut={() => {
+					void runCommandIntent("explicit");
+				}}
+				placeholder="Write your note. Add slash commands like /summarize on separate lines."
+			/>
 		</div>
 	);
 }

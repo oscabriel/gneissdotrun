@@ -19,6 +19,8 @@ interface CanvasPaneProps {
 		options?: { silent?: boolean },
 	) => Promise<void>;
 	onArchiveNote: (noteId: string) => Promise<void>;
+	onRunOrganization: (input: { noteId?: string }) => Promise<void>;
+	onRunFanOut: (input: { noteId: string; content: string }) => Promise<void>;
 	isCapturing: boolean;
 	ephemeralContent: string | null;
 	onCanvasInput: () => void;
@@ -29,6 +31,8 @@ export function CanvasPane({
 	onCapture,
 	onSaveNoteContent,
 	onArchiveNote,
+	onRunOrganization,
+	onRunFanOut,
 	isCapturing,
 	ephemeralContent,
 	onCanvasInput,
@@ -43,7 +47,7 @@ export function CanvasPane({
 		setExternalRunRequest(null);
 	}, [selectedNote?.id]);
 
-	const handlePaletteAction = (action: WorkspacePaletteAction) => {
+	const handlePaletteAction = async (action: WorkspacePaletteAction) => {
 		onCanvasInput();
 
 		if (action.kind === "navigation") {
@@ -65,7 +69,33 @@ export function CanvasPane({
 					void navigate({ to: "/history", search: { noteId: selectedNote.id } });
 					return;
 				}
+				case "/contradictions": {
+					void navigate({ to: "/contradictions" });
+					return;
+				}
 			}
+		}
+
+		if (action.kind === "workflow") {
+			try {
+				if (action.workflow === "organize") {
+					await onRunOrganization({ noteId: selectedNote?.id });
+					return;
+				}
+
+				if (!selectedNote) {
+					toast.warning("Select a note first to run fan-out.");
+					return;
+				}
+
+				await onRunFanOut({
+					noteId: selectedNote.id,
+					content: selectedNote.content,
+				});
+			} catch {
+				// errors are surfaced by workspace handlers
+			}
+			return;
 		}
 
 		if (!selectedNote) {
@@ -103,7 +133,11 @@ export function CanvasPane({
 				</div>
 			)}
 
-			<CommandPalette onSelectAction={handlePaletteAction} />
+			<CommandPalette
+				onSelectAction={(action) => {
+					void handlePaletteAction(action);
+				}}
+			/>
 		</>
 	);
 }
