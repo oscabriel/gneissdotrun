@@ -16,3 +16,6 @@ Whenever you learn something new that you are asked to remember, that feels cont
 - In `apps/server`, keep `/agents/*` on a single `routeAgentRequest` code path with explicit `404` fallback for non-upgrade HTTP; CORS preflight still succeeds via the global `cors` middleware.
 - After adding a new workspace package, run `bun install` before Turbo commands; otherwise Turbo may warn that the workspace is missing from `bun.lock`.
 - For package `tsc -b` scripts, exclude `dist` in workspace `tsconfig.json`; otherwise committed declaration outputs can trigger `TS5055` (output would overwrite input) during Turbo typecheck.
+- In Hono tests that call `app.fetch()` without an execution context, accessing `c.executionCtx` can throw; guard access (try/catch) before calling `waitUntil`.
+- In `apps/web` component tests with mocked text inputs, `fireEvent` can mutate DOM values without triggering React state updates unless the mock wires both `onChange` and `onInput`; include both handlers for reliable editor typing assertions.
+- In `packages/editor-pm` jsdom tests, TipTap focus paths may require `requestAnimationFrame`; provide a global RAF/CANCEL RAF shim in `src/test-dom.ts` to avoid runtime errors when commands or extensions trigger focus behavior.
