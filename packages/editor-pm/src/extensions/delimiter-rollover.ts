@@ -1,55 +1,236 @@
 import { Extension } from "@tiptap/core";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { EditorState } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
+
+type RolloverMarkName = "bold" | "italic" | "strike" | "code";
 
 type RolloverBoundary = {
-	markName: "bold" | "italic" | "strike" | "code";
+	markName: RolloverMarkName;
 	pos: number;
 	side: "inside" | "outside";
 } | null;
 
-const ROLLOVER_DELIMITERS: Record<"bold" | "italic" | "strike" | "code", string> = {
+type RolloverPluginState = {
+	boundary: RolloverBoundary;
+	active: boolean;
+};
+
+type RolloverPluginMeta =
+	| {
+			kind: "set-boundary";
+			boundary: RolloverBoundary;
+	  }
+	| {
+			kind: "set-active";
+			active: boolean;
+	  };
+
+type MarkRange = {
+	markName: RolloverMarkName;
+	from: number;
+	to: number;
+};
+
+type ActiveTextBlock = {
+	node: ProseMirrorNode;
+	start: number;
+};
+
+const ROLLOVER_DELIMITERS: Record<RolloverMarkName, string> = {
 	bold: "**",
 	italic: "*",
 	strike: "~~",
 	code: "`",
 };
 
-const MARK_ORDER: Array<"code" | "bold" | "italic" | "strike"> = [
-	"code",
-	"bold",
-	"italic",
-	"strike",
-];
+const MARK_ORDER: RolloverMarkName[] = ["code", "bold", "italic", "strike"];
 
-export const markdownDelimiterRolloverPluginKey = new PluginKey<RolloverBoundary>(
+export const markdownDelimiterRolloverPluginKey = new PluginKey<RolloverPluginState>(
 	"markdown-delimiter-rollover",
 );
 
-function detectBoundary(state: EditorState): RolloverBoundary {
-	const { selection } = state;
-	if (!selection.empty) {
-		return null;
+function findActiveTextBlock(state: EditorState): ActiveTextBlock | null {
+	const $from = state.selection.$from;
+	for (let depth = $from.depth; depth > 0; depth -= 1) {
+		const node = $from.node(depth);
+		if (!node.isTextblock) {
+			continue;
+		}
+		return {
+			node,
+			start: $from.start(depth),
+		};
 	}
+	return null;
+}
 
-	const $from = selection.$from;
-	const beforeMarks = $from.nodeBefore?.marks ?? [];
-	const afterMarks = $from.nodeAfter?.marks ?? [];
-	const merged = [...beforeMarks, ...afterMarks];
+function collectMarkRanges(block: ActiveTextBlock): MarkRange[] {
+	const ranges: MarkRange[] = [];
 
 	for (const markName of MARK_ORDER) {
-		if (merged.some((mark) => mark.type.name === markName)) {
-			const beforeHas = beforeMarks.some((mark) => mark.type.name === markName);
-			return {
+		let rangeStart: number | null = null;
+
+		block.node.forEach((child, offset) => {
+			const from = block.start + offset;
+			const hasMark = child.isText && child.marks.some((mark) => mark.type.name === markName);
+			if (hasMark && rangeStart === null) {
+				rangeStart = from;
+				return;
+			}
+			if (!hasMark && rangeStart !== null) {
+				ranges.push({
+					markName,
+					from: rangeStart,
+					to: from,
+				});
+				rangeStart = null;
+			}
+		});
+
+		if (rangeStart !== null) {
+			ranges.push({
 				markName,
-				pos: selection.from,
-				side: beforeHas ? "outside" : "inside",
-			};
+				from: rangeStart,
+				to: block.start + block.node.content.size,
+			});
 		}
 	}
 
+	return ranges;
+}
+
+function getBoundaryMarkRange(state: EditorState, boundary: Exclude<RolloverBoundary, null>): MarkRange | null {
+	const activeBlock = findActiveTextBlock(state);
+	if (!activeBlock) {
+		return null;
+	}
+	const ranges = collectMarkRanges(activeBlock);
+	return (
+		ranges.find(
+			(range) =>
+				range.markName === boundary.markName &&
+				(range.from === boundary.pos || range.to === boundary.pos),
+		) ?? null
+	);
+}
+
+function detectBoundary(state: EditorState): RolloverBoundary {
+	if (!state.selection.empty) {
+		return null;
+	}
+
+	const activeBlock = findActiveTextBlock(state);
+	if (!activeBlock) {
+		return null;
+	}
+
+	const cursor = state.selection.from;
+	const ranges = collectMarkRanges(activeBlock);
+
+	for (const markName of MARK_ORDER) {
+		const range = ranges.find(
+			(candidate) =>
+				candidate.markName === markName &&
+				(candidate.from === cursor || candidate.to === cursor),
+		);
+		if (!range) {
+			continue;
+		}
+		return {
+			markName,
+			pos: cursor,
+			side: range.from === cursor ? "inside" : "outside",
+		};
+	}
+
 	return null;
+}
+
+function delimiterSideAtBoundary(
+	boundary: RolloverBoundary,
+	range: MarkRange,
+	kind: "open" | "close",
+): number {
+	if (!boundary || boundary.markName !== range.markName) {
+		return kind === "open" ? -1 : 1;
+	}
+
+	if (kind === "open" && boundary.pos === range.from) {
+		return boundary.side === "inside" ? -1 : 1;
+	}
+
+	if (kind === "close" && boundary.pos === range.to) {
+		return boundary.side === "inside" ? 1 : -1;
+	}
+
+	return kind === "open" ? -1 : 1;
+}
+
+function createMarkerWidget(symbol: string, markerRole: "open" | "close" | "heading-prefix") {
+	const widget = document.createElement("span");
+	widget.className = "pm-rollover-delimiter";
+	if (markerRole === "heading-prefix") {
+		widget.classList.add("pm-rollover-heading-prefix");
+	}
+	widget.dataset.markerRole = markerRole;
+	widget.textContent = symbol;
+	return widget;
+}
+
+function buildDecorations(state: EditorState, boundary: RolloverBoundary): DecorationSet {
+	if (!state.selection.empty) {
+		return DecorationSet.empty;
+	}
+
+	const activeBlock = findActiveTextBlock(state);
+	if (!activeBlock) {
+		return DecorationSet.empty;
+	}
+
+	const decorations: Decoration[] = [];
+
+	if (activeBlock.node.type.name === "heading") {
+		const level = Math.max(1, Math.min(6, Number(activeBlock.node.attrs.level ?? 1)));
+		const prefix = `${"#".repeat(level)} `;
+		decorations.push(
+			Decoration.widget(activeBlock.start, createMarkerWidget(prefix, "heading-prefix"), {
+				side: -1,
+				key: `heading-prefix-${activeBlock.start}`,
+				markerRole: "heading-prefix",
+				symbol: prefix,
+			}),
+		);
+	}
+
+	for (const range of collectMarkRanges(activeBlock)) {
+		const delimiter = ROLLOVER_DELIMITERS[range.markName];
+		decorations.push(
+			Decoration.widget(range.from, createMarkerWidget(delimiter, "open"), {
+				side: delimiterSideAtBoundary(boundary, range, "open"),
+				key: `mark-open-${range.markName}-${range.from}-${range.to}`,
+				markName: range.markName,
+				markerRole: "open",
+				symbol: delimiter,
+			}),
+		);
+		decorations.push(
+			Decoration.widget(range.to, createMarkerWidget(delimiter, "close"), {
+				side: delimiterSideAtBoundary(boundary, range, "close"),
+				key: `mark-close-${range.markName}-${range.from}-${range.to}`,
+				markName: range.markName,
+				markerRole: "close",
+				symbol: delimiter,
+			}),
+		);
+	}
+
+	if (decorations.length === 0) {
+		return DecorationSet.empty;
+	}
+
+	return DecorationSet.create(state.doc, decorations);
 }
 
 export const DelimiterRolloverExtension = Extension.create({
@@ -62,7 +243,8 @@ export const DelimiterRolloverExtension = Extension.create({
 	addKeyboardShortcuts() {
 		return {
 			ArrowLeft: () => {
-				const boundary = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
+				const pluginState = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
+				const boundary = pluginState?.boundary ?? null;
 				if (!boundary) {
 					return false;
 				}
@@ -70,12 +252,16 @@ export const DelimiterRolloverExtension = Extension.create({
 					...boundary,
 					side: boundary.side === "inside" ? "outside" : "inside",
 				};
-				const tr = this.editor.state.tr.setMeta(markdownDelimiterRolloverPluginKey, nextBoundary);
+				const tr = this.editor.state.tr.setMeta(markdownDelimiterRolloverPluginKey, {
+					kind: "set-boundary",
+					boundary: nextBoundary,
+				} satisfies RolloverPluginMeta);
 				this.editor.view.dispatch(tr);
 				return true;
 			},
 			ArrowRight: () => {
-				const boundary = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
+				const pluginState = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
+				const boundary = pluginState?.boundary ?? null;
 				if (!boundary) {
 					return false;
 				}
@@ -83,12 +269,16 @@ export const DelimiterRolloverExtension = Extension.create({
 					...boundary,
 					side: boundary.side === "inside" ? "outside" : "inside",
 				};
-				const tr = this.editor.state.tr.setMeta(markdownDelimiterRolloverPluginKey, nextBoundary);
+				const tr = this.editor.state.tr.setMeta(markdownDelimiterRolloverPluginKey, {
+					kind: "set-boundary",
+					boundary: nextBoundary,
+				} satisfies RolloverPluginMeta);
 				this.editor.view.dispatch(tr);
 				return true;
 			},
 			Backspace: () => {
-				const boundary = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
+				const pluginState = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
+				const boundary = pluginState?.boundary ?? null;
 				if (!boundary) {
 					return false;
 				}
@@ -96,11 +286,22 @@ export const DelimiterRolloverExtension = Extension.create({
 				if (!markType) {
 					return false;
 				}
-				this.editor.chain().focus().unsetMark(markType.name).run();
+				const range = getBoundaryMarkRange(this.editor.state, boundary);
+				if (!range) {
+					return false;
+				}
+				const tr = this.editor.state.tr
+					.removeMark(range.from, range.to, markType)
+					.setMeta(markdownDelimiterRolloverPluginKey, {
+						kind: "set-boundary",
+						boundary: null,
+					} satisfies RolloverPluginMeta);
+				this.editor.view.dispatch(tr);
 				return true;
 			},
 			Delete: () => {
-				const boundary = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
+				const pluginState = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
+				const boundary = pluginState?.boundary ?? null;
 				if (!boundary) {
 					return false;
 				}
@@ -108,41 +309,85 @@ export const DelimiterRolloverExtension = Extension.create({
 				if (!markType) {
 					return false;
 				}
-				this.editor.chain().focus().unsetMark(markType.name).run();
+				const range = getBoundaryMarkRange(this.editor.state, boundary);
+				if (!range) {
+					return false;
+				}
+				const tr = this.editor.state.tr
+					.removeMark(range.from, range.to, markType)
+					.setMeta(markdownDelimiterRolloverPluginKey, {
+						kind: "set-boundary",
+						boundary: null,
+					} satisfies RolloverPluginMeta);
+				this.editor.view.dispatch(tr);
 				return true;
 			},
 		};
 	},
 	addProseMirrorPlugins() {
 		return [
-			new Plugin<RolloverBoundary>({
+			new Plugin<RolloverPluginState>({
 				key: markdownDelimiterRolloverPluginKey,
 				state: {
-					init: (_config, state) => detectBoundary(state),
-					apply: (tr, _value, _oldState, newState) => {
-						const fromMeta = tr.getMeta(markdownDelimiterRolloverPluginKey) as RolloverBoundary;
-						if (fromMeta !== undefined) {
-							return fromMeta;
+					init: (_config, state) => ({
+						boundary: detectBoundary(state),
+						active: true,
+					}),
+					apply: (tr, value, _oldState, newState) => {
+						const fromMeta = tr.getMeta(markdownDelimiterRolloverPluginKey) as
+							| RolloverPluginMeta
+							| undefined;
+						if (fromMeta?.kind === "set-active") {
+							return {
+								active: fromMeta.active,
+								boundary: fromMeta.active ? detectBoundary(newState) : null,
+							};
 						}
-						return detectBoundary(newState);
+						if (fromMeta?.kind === "set-boundary") {
+							return {
+								...value,
+								boundary: fromMeta.boundary,
+							};
+						}
+						if (!value.active) {
+							return {
+								...value,
+								boundary: null,
+							};
+						}
+						return {
+							...value,
+							boundary: detectBoundary(newState),
+						};
 					},
 				},
 				props: {
+					handleDOMEvents: {
+						focus: (view) => {
+							view.dispatch(
+								view.state.tr.setMeta(markdownDelimiterRolloverPluginKey, {
+									kind: "set-active",
+									active: true,
+								} satisfies RolloverPluginMeta),
+							);
+							return false;
+						},
+						blur: (view) => {
+							view.dispatch(
+								view.state.tr.setMeta(markdownDelimiterRolloverPluginKey, {
+									kind: "set-active",
+									active: false,
+								} satisfies RolloverPluginMeta),
+							);
+							return false;
+						},
+					},
 					decorations: (state) => {
-						const boundary = markdownDelimiterRolloverPluginKey.getState(state);
-						if (!boundary) {
+						const pluginState = markdownDelimiterRolloverPluginKey.getState(state);
+						if (!pluginState?.active) {
 							return DecorationSet.empty;
 						}
-						const delimiter = ROLLOVER_DELIMITERS[boundary.markName];
-						const widget = document.createElement("span");
-						widget.className = "pm-rollover-delimiter";
-						widget.textContent = delimiter;
-						widget.dataset.side = boundary.side;
-						return DecorationSet.create(state.doc, [
-							Decoration.widget(boundary.pos, widget, {
-								side: boundary.side === "inside" ? -1 : 1,
-							}),
-						]);
+						return buildDecorations(state, pluginState.boundary);
 					},
 				},
 			}),
