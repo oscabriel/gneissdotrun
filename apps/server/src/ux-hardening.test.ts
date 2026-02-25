@@ -41,6 +41,7 @@ interface NoteRecord {
 	tags: string;
 	updatedAt: number;
 	createdAt: number;
+	processedAt: number | null;
 	deletedAt: number | null;
 }
 
@@ -104,6 +105,7 @@ class FakeD1Database {
 		tags?: string[];
 		updatedAt?: number;
 		createdAt?: number;
+		processedAt?: number | null;
 	}): void {
 		const now = Date.now();
 		this.notes.set(input.id, {
@@ -115,6 +117,7 @@ class FakeD1Database {
 			tags: JSON.stringify(input.tags ?? []),
 			updatedAt: input.updatedAt ?? now,
 			createdAt: input.createdAt ?? now,
+			processedAt: input.processedAt ?? null,
 			deletedAt: null,
 		});
 	}
@@ -166,13 +169,19 @@ class FakeD1Database {
 				tags,
 				createdAt,
 				updatedAt,
+				processedAt: null,
 				deletedAt: null,
 			});
 			return;
 		}
 
-		if (normalized.startsWith("update notes set content = ?1, summary = ?2, updated_at = ?3")) {
-			const [content, summary, updatedAt, noteId, userId] = params as [
+		if (
+			normalized.startsWith(
+				"update notes set title = ?1, content = ?2, summary = ?3, updated_at = ?4, processed_at = null",
+			)
+		) {
+			const [title, content, summary, updatedAt, noteId, userId] = params as [
+				string,
 				string,
 				string,
 				number,
@@ -181,9 +190,11 @@ class FakeD1Database {
 			];
 			const note = this.notes.get(noteId);
 			if (note && note.userId === userId && note.deletedAt === null) {
+				note.title = title;
 				note.content = content;
 				note.summary = summary;
 				note.updatedAt = updatedAt;
+				note.processedAt = null;
 			}
 			return;
 		}
@@ -388,6 +399,7 @@ function createCaptureTestContext(fixture: DecisionFixture): {
 	db: FakeD1Database;
 	env: CaptureEnv;
 	indexNamespace: FakeDurableNamespace;
+	organizationNamespace: FakeDurableNamespace;
 } {
 	const payload = decisionPayload(fixture);
 	const db = new FakeD1Database();
@@ -401,17 +413,34 @@ function createCaptureTestContext(fixture: DecisionFixture): {
 	const indexNamespace = new FakeDurableNamespace(
 		async (_name, _url, _init) => new Response("{}", { status: 200 }),
 	);
+	const organizationNamespace = new FakeDurableNamespace(
+		async (_name, _url, _init) =>
+			new Response(JSON.stringify({ ok: true, workflow: "wf_test" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+	);
 	const env = {
 		DB: db,
 		ROUTER_AGENT: routerNamespace,
 		INDEX_AGENT: indexNamespace,
+		ORGANIZATION_AGENT: organizationNamespace,
 	} as unknown as CaptureEnv;
 
 	return {
 		db,
 		env,
 		indexNamespace,
+		organizationNamespace,
 	};
+}
+
+function parseRequestBody(call: FetchCall): Record<string, unknown> {
+	if (!call.init?.body || typeof call.init.body !== "string") {
+		return {};
+	}
+
+	return JSON.parse(call.init.body) as Record<string, unknown>;
 }
 
 describe("UX-083 route execution outcomes", () => {
@@ -433,12 +462,15 @@ describe("UX-083 route execution outcomes", () => {
 	});
 
 	it("executes update_existing against the active note", async () => {
-		const { db, env } = createCaptureTestContext({ kind: "update_existing" });
+		const { db, env, organizationNamespace } = createCaptureTestContext({
+			kind: "update_existing",
+		});
 		db.seedNote({
 			id: "11111111-1111-4111-8111-111111111111",
 			userId,
 			title: "Existing",
 			content: "Base content",
+			processedAt: 100,
 		});
 
 		const result = await executeCapture(env, {
@@ -453,6 +485,13 @@ describe("UX-083 route execution outcomes", () => {
 		const updated = db.getNote("11111111-1111-4111-8111-111111111111");
 		assert.ok(updated);
 		assert.match(updated.content, /Append this section/);
+		assert.equal(updated.processedAt, null);
+
+		const workflowCalls = organizationNamespace.calls(userId);
+		assert.ok(workflowCalls.length > 0);
+		const requestBody = parseRequestBody(workflowCalls[workflowCalls.length - 1]!);
+		assert.equal(requestBody.action, "run_organize");
+		assert.deepEqual(requestBody.noteIds, ["11111111-1111-4111-8111-111111111111"]);
 	});
 
 	it("executes correction with confidence gating and updates target note", async () => {
@@ -493,7 +532,13 @@ describe("UX-083 route execution outcomes", () => {
 	});
 
 	it("executes fan_out and returns queued_fanout secondary effect", async () => {
-		const { env } = createCaptureTestContext({ kind: "fan_out" });
+		const { db, env } = createCaptureTestContext({ kind: "fan_out" });
+		db.seedNote({
+			id: "77777777-7777-4777-8777-777777777777",
+			userId,
+			title: "Another note",
+			content: "Existing context",
+		});
 		const result = await executeCapture(env, {
 			userId,
 			userInput: "Project update plus personal reminders",
@@ -546,7 +591,10 @@ describe("UX-083 route execution outcomes", () => {
 	});
 
 	it("executes store_preference and emits preference_saved effect", async () => {
-		const { db, env } = createCaptureTestContext({ kind: "store_preference", target: "none" });
+		const { db, env, organizationNamespace } = createCaptureTestContext({
+			kind: "store_preference",
+			target: "none",
+		});
 		const result = await executeCapture(env, {
 			userId,
 			userInput: "/remember prefer concise summaries",
@@ -557,6 +605,12 @@ describe("UX-083 route execution outcomes", () => {
 		assert.equal(result.outcome.uiAction, "stay_blank");
 		assert.equal(result.outcome.secondaryEffects?.[0]?.type, "preference_saved");
 		assert.equal(db.listUserPreferences(userId).length, 1);
+		assert.equal(
+			organizationNamespace
+				.calls(userId)
+				.some((call) => parseRequestBody(call).action === "run_organize"),
+			false,
+		);
 	});
 
 	it("executes duplicate route without creating additional notes", async () => {
@@ -580,6 +634,28 @@ describe("UX-083 route execution outcomes", () => {
 		assert.equal(db.listUserNotes(userId).length, 1);
 	});
 
+	it("forces rewrite update when duplicate decision matches active note content exactly", async () => {
+		const { db, env } = createCaptureTestContext({ kind: "duplicate", confidence: 0.92 });
+		const noteId = "77777777-7777-4777-8777-777777777777";
+		db.seedNote({
+			id: noteId,
+			userId,
+			title: "Active",
+			content: "Already captured",
+			updatedAt: 50,
+		});
+
+		const result = await executeCapture(env, {
+			userId,
+			noteId,
+			userInput: "already captured",
+		});
+
+		assert.equal(result.decision.kind, "update_existing");
+		assert.equal(result.outcome.kind, "update_existing");
+		assert.equal(result.outcome.noteId, noteId);
+	});
+
 	it("records history snapshots for note-mutating outcomes", async () => {
 		const { db, env } = createCaptureTestContext({ kind: "new_note" });
 		const result = await executeCapture(env, {
@@ -592,11 +668,11 @@ describe("UX-083 route execution outcomes", () => {
 	});
 });
 
-describe("UX-086 background organization trigger path", () => {
+describe("UX-086 workflow trigger coverage", () => {
 	const userId = "user_ux086";
 
-	it("fan_out route executes background pass for secondary notes", async () => {
-		const { db, env } = createCaptureTestContext({ kind: "fan_out" });
+	it("fan_out route triggers workflow and organization refresh calls", async () => {
+		const { db, env, organizationNamespace } = createCaptureTestContext({ kind: "fan_out" });
 		db.seedNote({
 			id: "33333333-3333-4333-8333-333333333333",
 			userId,
@@ -618,13 +694,9 @@ describe("UX-086 background organization trigger path", () => {
 		});
 
 		assert.equal(result.outcome.kind, "fan_out");
-		assert.ok(result.outcome.secondaryEffects?.some((effect) => effect.type === "queued_fanout"));
-		await new Promise((resolve) => setTimeout(resolve, 0));
-		const secondaryA = db.getNote("33333333-3333-4333-8333-333333333333");
-		const secondaryB = db.getNote("44444444-4444-4444-8444-444444444444");
-		assert.ok(secondaryA);
-		assert.ok(secondaryB);
-		assert.match(secondaryA.content, /Fan out this update/);
-		assert.match(secondaryB.content, /Fan out this update/);
+
+		const calls = organizationNamespace.calls(userId).map((call) => parseRequestBody(call));
+		assert.ok(calls.some((payload) => payload.action === "run_fanout"));
+		assert.ok(calls.some((payload) => payload.action === "run_organize"));
 	});
 });

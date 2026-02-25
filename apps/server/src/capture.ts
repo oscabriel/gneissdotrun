@@ -6,12 +6,17 @@ import type {
 } from "@gneissdotrun/api/capture-contract";
 import { getAgentByName } from "agents";
 
-import type { IndexAgent, RouterAgent } from "./agents";
+import type { IndexAgent, OrganizationAgent, RouterAgent } from "./agents";
 import { generateRewriteText } from "./agents/shared";
 import type { RoutingDecision } from "./agents/shared";
-import { queueFanOutInBackground } from "./agents/workflows/fanout-workflow";
 import { createAuditLog } from "./audit";
 import { createNoteHistoryEvent, createNoteVersion, ensureHistorySchema } from "./history";
+import {
+	deriveNoteTitleFromContent,
+	sanitizeTitleForStorage,
+	shouldAutoRetitle,
+} from "./note-title";
+import { triggerOrganizationRefresh } from "./organization-refresh";
 
 interface CaptureRequestInput {
 	userId: string;
@@ -111,16 +116,6 @@ function stripSlashCommandLines(input: string): string {
 	const lines = input.split("\n");
 	const filtered = lines.filter((line) => !/^\s*\/[a-z-]+(?:\s+.*)?\s*$/i.test(line.trim()));
 	return filtered.join("\n").trimEnd();
-}
-
-function deriveTitle(input: string): string {
-	const firstLine = input.split("\n")[0]?.trim() ?? "";
-	const cleaned = firstLine.replace(/^#+\s*/, "").trim();
-	if (!cleaned) {
-		return "Untitled note";
-	}
-
-	return cleaned.slice(0, 120);
 }
 
 function parseTags(raw: string): string[] {
@@ -226,7 +221,37 @@ function fallbackRewriteContent(currentContent: string, userInput: string): stri
 		return cleanedCurrent;
 	}
 
+	if (normalizeComparableText(cleanedCurrent) === normalizeComparableText(cleanedInput)) {
+		return cleanedCurrent;
+	}
+
 	return `${cleanedCurrent}\n\n${cleanedInput}`.trim();
+}
+
+function normalizeComparableText(input: string): string {
+	return stripSlashCommandLines(input).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function shouldForceRewriteForDuplicate(
+	decision: CaptureExecutionResult["decision"],
+	targetNote: UserNote | null,
+	cleanedInput: string,
+): boolean {
+	if (!targetNote) {
+		return false;
+	}
+
+	if (decision.kind !== "duplicate") {
+		return false;
+	}
+
+	const inputFingerprint = normalizeComparableText(cleanedInput);
+	if (!inputFingerprint) {
+		return false;
+	}
+
+	const noteFingerprint = normalizeComparableText(targetNote.content);
+	return inputFingerprint === noteFingerprint;
 }
 
 async function rewriteNoteContent(
@@ -540,10 +565,43 @@ async function notifyIndexRemove(env: Env, userId: string, noteId: string): Prom
 	});
 }
 
+async function triggerFanOutWorkflow(
+	env: Env,
+	userId: string,
+	params: { targetNoteIds: string[]; input: string },
+): Promise<void> {
+	const targetNoteIds = Array.from(new Set(params.targetNoteIds)).filter(
+		(noteId) => noteId.length > 0,
+	);
+	if (targetNoteIds.length === 0) {
+		return;
+	}
+
+	const organizationAgent = await getAgentByName<Env, OrganizationAgent>(
+		env.ORGANIZATION_AGENT,
+		userId,
+	);
+	const response = await organizationAgent.fetch("https://organization-agent/internal", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			action: "run_fanout",
+			targetNoteIds,
+			input: params.input,
+		}),
+	});
+
+	if (!response.ok) {
+		throw new Error(`Fan-out workflow trigger failed (${response.status})`);
+	}
+}
+
 async function createNote(env: Env, userId: string, rawContent: string): Promise<UserNote> {
 	const now = Date.now();
 	const content = stripSlashCommandLines(rawContent).trim();
-	const title = deriveTitle(content);
+	const title = sanitizeTitleForStorage(deriveNoteTitleFromContent(content));
 	const noteId = crypto.randomUUID();
 	const summary = compactSummary(content);
 
@@ -582,15 +640,19 @@ async function updateNote(
 			? cleanedInput || note.content
 			: [note.content.trim(), cleanedInput].filter(Boolean).join("\n\n").trim();
 	const nextSummary = compactSummary(nextContent);
+	const nextTitle = sanitizeTitleForStorage(
+		shouldAutoRetitle(note.title) ? deriveNoteTitleFromContent(nextContent) : note.title,
+	);
 
 	await env.DB.prepare(
-		"UPDATE notes SET content = ?1, summary = ?2, updated_at = ?3 WHERE id = ?4 AND user_id = ?5 AND deleted_at IS NULL",
+		"UPDATE notes SET title = ?1, content = ?2, summary = ?3, updated_at = ?4, processed_at = NULL WHERE id = ?5 AND user_id = ?6 AND deleted_at IS NULL",
 	)
-		.bind(nextContent, nextSummary, now, note.id, userId)
+		.bind(nextTitle, nextContent, nextSummary, now, note.id, userId)
 		.run();
 
 	const updated: UserNote = {
 		...note,
+		title: nextTitle,
 		content: nextContent,
 		summary: nextSummary,
 		updatedAt: now,
@@ -827,7 +889,7 @@ function buildHistoryActionSummary(
 		case "split":
 			return "Split capture into multiple notes.";
 		case "fan_out":
-			return "Accepted fan-out and queued background organization.";
+			return "Accepted fan-out and queued fan-out workflow.";
 		case "workspace_action":
 			return "Applied a workspace action.";
 		case "store_preference":
@@ -869,6 +931,37 @@ function collectHistoryNoteIds(
 
 		if (request.noteId) {
 			noteIds.add(request.noteId);
+		}
+	}
+
+	return [...noteIds];
+}
+
+const ORGANIZE_MUTATION_KINDS = new Set<RouteExecutionKind>([
+	"new_note",
+	"update_existing",
+	"correction",
+	"split",
+	"fan_out",
+]);
+
+function collectOrganizeRefreshNoteIds(result: CaptureExecutionResult): string[] {
+	if (!ORGANIZE_MUTATION_KINDS.has(result.decision.kind)) {
+		return [];
+	}
+
+	const noteIds = new Set<string>();
+	if (result.outcome.noteId) {
+		noteIds.add(result.outcome.noteId);
+	}
+
+	for (const noteId of result.outcome.noteIds ?? []) {
+		noteIds.add(noteId);
+	}
+
+	for (const effect of result.outcome.secondaryEffects ?? []) {
+		if (effect.id && (effect.type === "updated_note" || effect.type === "created_note")) {
+			noteIds.add(effect.id);
 		}
 	}
 
@@ -1005,8 +1098,19 @@ export async function executeCapture(
 		throw captureError("INVALID_INPUT", "noteId is invalid for this user.", true, 400);
 	}
 
-	const decision = await classifyDecision(env, request.userId, request, targetNote);
+	let decision = await classifyDecision(env, request.userId, request, targetNote);
 	const cleanedInput = stripSlashCommandLines(request.userInput).trim();
+
+	if (shouldForceRewriteForDuplicate(decision, targetNote, cleanedInput)) {
+		decision = {
+			...decision,
+			kind: "update_existing",
+			target: "rewrite-agent",
+			confidence: Math.max(decision.confidence, 0.86),
+			reason: "Explicit run matched current note content; forcing rewrite update.",
+			tags: Array.from(new Set([...(decision.tags ?? []), "explicit_run", "rewrite"])),
+		};
+	}
 
 	const executeNewNote = async (
 		toast?: RouteExecutionOutcome["toast"],
@@ -1219,12 +1323,23 @@ export async function executeCapture(
 					.map((note) => note.id)
 					.filter((noteId) => noteId !== primary.id)
 					.slice(0, 5);
+				const fanOutQueued = fanoutTargets.length > 0;
 
-				queueFanOutInBackground(env, {
-					userId: request.userId,
-					targetNoteIds: fanoutTargets,
-					input: cleanedInput || request.userInput,
-				});
+				if (fanOutQueued) {
+					try {
+						await triggerFanOutWorkflow(env, request.userId, {
+							targetNoteIds: fanoutTargets,
+							input: cleanedInput || request.userInput,
+						});
+					} catch (error) {
+						console.error("capture.fanout.trigger_failed", {
+							error,
+							userId: request.userId,
+							noteId: primary.id,
+							targetNoteIds: fanoutTargets,
+						});
+					}
+				}
 
 				const primaryId =
 					selectPrimaryNoteId([
@@ -1242,9 +1357,13 @@ export async function executeCapture(
 						kind: "fan_out",
 						uiAction: "open_note",
 						noteId: primaryId,
-						toast: infoToast("Fan-out accepted and queued in the background."),
+						toast: infoToast(
+							fanOutQueued
+								? "Fan-out accepted and queued in the background."
+								: "Fan-out accepted. No secondary notes available yet.",
+						),
 						secondaryEffects: [
-							{ type: "queued_fanout", id: primaryId },
+							...(fanOutQueued ? [{ type: "queued_fanout" as const, id: primaryId }] : []),
 							...(targetNote ? [] : [{ type: "created_note" as const, id: primaryId }]),
 						],
 					}),
@@ -1363,6 +1482,10 @@ export async function executeCapture(
 		}
 
 		await recordCaptureHistory(env, request, result.decision, result.outcome);
+
+		void triggerOrganizationRefresh(env, request.userId, collectOrganizeRefreshNoteIds(result), {
+			reason: `capture:${result.decision.kind}`,
+		});
 
 		const auditEvent = buildAuditEvent({
 			decision: result.decision,

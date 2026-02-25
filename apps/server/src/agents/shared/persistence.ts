@@ -1,6 +1,7 @@
 import { createId } from "./id";
 import { embedNoteForVectorize, upsertEmbeddings } from "../vectorize";
 import { createAuditLog } from "../../audit";
+import { sanitizeTitleForStorage } from "../../note-title";
 
 import type { IndexedNote } from "./agent-env";
 
@@ -39,7 +40,7 @@ export async function persistNoteAndNotify(
 	input: NotePersistenceInput,
 ): Promise<IndexedNote> {
 	const now = input.updatedAt ?? Date.now();
-	const trimmedTitle = input.title.trim().length > 0 ? input.title.trim() : "Untitled note";
+	const trimmedTitle = sanitizeTitleForStorage(input.title);
 	const summary = input.summary.trim();
 	const contentHash = await hashContent(input.content);
 	const tags = input.tags ?? [];

@@ -25,6 +25,13 @@ import {
 } from "./history";
 import type { IndexAgent, OrganizationAgent, SurfacingAgent } from "./agents";
 import { rateLimitMiddleware } from "./middleware/rate-limit";
+import { normalizeNoteIds, triggerOrganizationRefresh } from "./organization-refresh";
+import { scheduleAutoRewriteForNote } from "./auto-rewrite";
+import {
+	deriveNoteTitleFromContent,
+	sanitizeTitleForStorage,
+	titleContainsLinks,
+} from "./note-title";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -70,6 +77,20 @@ const createNoteValidator = validator("json", (value, c) => {
 		);
 	}
 
+	if (parsed.data.title && titleContainsLinks(parsed.data.title)) {
+		return c.json(
+			{
+				error: "Invalid note payload",
+				issues: {
+					fieldErrors: {
+						title: ["Title cannot contain links."],
+					},
+				},
+			},
+			400,
+		);
+	}
+
 	return parsed.data;
 });
 
@@ -85,6 +106,20 @@ const updateNoteValidator = validator("json", (value, c) => {
 			{
 				error: "Invalid note update payload",
 				issues: z.flattenError(parsed.error),
+			},
+			400,
+		);
+	}
+
+	if (parsed.data.title && titleContainsLinks(parsed.data.title)) {
+		return c.json(
+			{
+				error: "Invalid note update payload",
+				issues: {
+					fieldErrors: {
+						title: ["Title cannot contain links."],
+					},
+				},
 			},
 			400,
 		);
@@ -166,6 +201,8 @@ const collectionIdSchema = z
 	.trim()
 	.regex(/^collection_[0-9a-fA-F-]{36}$/);
 
+const noteIdListSchema = z.array(z.uuid()).max(100);
+
 const collectionLifecyclePayloadSchema = z.discriminatedUnion("action", [
 	z.object({
 		action: z.literal("set_collection_status"),
@@ -180,7 +217,32 @@ const collectionLifecyclePayloadSchema = z.discriminatedUnion("action", [
 	z.object({
 		action: z.literal("refresh_collections"),
 	}),
+	z.object({
+		action: z.literal("run_organize"),
+		noteIds: noteIdListSchema.optional(),
+	}),
 ]);
+
+const runFanOutPayloadSchema = z.object({
+	sourceNoteId: z.uuid().optional(),
+	targetNoteIds: noteIdListSchema.optional(),
+	input: z.string().trim().max(50_000).optional(),
+});
+
+const contradictionIdSchema = z
+	.string()
+	.trim()
+	.regex(/^contradiction_[0-9a-fA-F-]{36}$/);
+
+const contradictionAnalyzePayloadSchema = z.object({
+	contradictionId: contradictionIdSchema,
+});
+
+const contradictionResolvePayloadSchema = z.object({
+	workflowId: z.string().trim().min(1),
+	keep: z.enum(["factA", "factB"]),
+	reason: z.string().trim().max(500).optional(),
+});
 
 const surfacingQueryValidator = validator("json", (value, c) => {
 	const parsed = surfacingQueryPayloadSchema.safeParse(value);
@@ -203,6 +265,51 @@ const collectionLifecycleValidator = validator("json", (value, c) => {
 		return c.json(
 			{
 				error: "Invalid collection lifecycle payload",
+				issues: z.flattenError(parsed.error),
+			},
+			400,
+		);
+	}
+
+	return parsed.data;
+});
+
+const runFanOutValidator = validator("json", (value, c) => {
+	const parsed = runFanOutPayloadSchema.safeParse(value);
+	if (!parsed.success) {
+		return c.json(
+			{
+				error: "Invalid fan-out payload",
+				issues: z.flattenError(parsed.error),
+			},
+			400,
+		);
+	}
+
+	return parsed.data;
+});
+
+const contradictionAnalyzeValidator = validator("json", (value, c) => {
+	const parsed = contradictionAnalyzePayloadSchema.safeParse(value);
+	if (!parsed.success) {
+		return c.json(
+			{
+				error: "Invalid contradiction analyze payload",
+				issues: z.flattenError(parsed.error),
+			},
+			400,
+		);
+	}
+
+	return parsed.data;
+});
+
+const contradictionResolveValidator = validator("json", (value, c) => {
+	const parsed = contradictionResolvePayloadSchema.safeParse(value);
+	if (!parsed.success) {
+		return c.json(
+			{
+				error: "Invalid contradiction resolve payload",
 				issues: z.flattenError(parsed.error),
 			},
 			400,
@@ -245,6 +352,14 @@ async function getSessionUser(request: Request) {
 
 function sanitizeFileName(name: string): string {
 	return name.replaceAll(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
+}
+
+function getExecutionCtxSafe(c: { executionCtx: ExecutionContext }): ExecutionContext | null {
+	try {
+		return c.executionCtx;
+	} catch {
+		return null;
+	}
 }
 
 app.use(logger());
@@ -356,16 +471,17 @@ app.post("/api/notes/:noteId/revert", noteIdParamValidator, revertNoteValidator,
 	}
 
 	const now = Date.now();
+	const title = sanitizeTitleForStorage(version.title);
 	const summary =
 		version.summary.trim().length > 0
 			? version.summary
 			: version.content.replace(/\s+/g, " ").trim().slice(0, 240);
 
 	await c.env.DB.prepare(
-		"UPDATE notes SET title = ?1, content = ?2, summary = ?3, tags = ?4, updated_at = ?5 WHERE id = ?6 AND user_id = ?7 AND deleted_at IS NULL",
+		"UPDATE notes SET title = ?1, content = ?2, summary = ?3, tags = ?4, updated_at = ?5, processed_at = NULL WHERE id = ?6 AND user_id = ?7 AND deleted_at IS NULL",
 	)
 		.bind(
-			version.title,
+			title,
 			version.content,
 			summary,
 			JSON.stringify(version.tags),
@@ -378,7 +494,7 @@ app.post("/api/notes/:noteId/revert", noteIdParamValidator, revertNoteValidator,
 	const newVersionId = await createNoteVersion(c.env.DB, {
 		noteId,
 		userId: user.id,
-		title: version.title,
+		title,
 		content: version.content,
 		summary,
 		tags: version.tags,
@@ -416,7 +532,7 @@ app.post("/api/notes/:noteId/revert", noteIdParamValidator, revertNoteValidator,
 				action: "upsert",
 				note: {
 					id: noteId,
-					title: version.title,
+					title,
 					summary,
 					updatedAt: now,
 				},
@@ -426,10 +542,14 @@ app.post("/api/notes/:noteId/revert", noteIdParamValidator, revertNoteValidator,
 		console.error("Failed to notify index agent for revert", error);
 	}
 
+	void triggerOrganizationRefresh(c.env, user.id, [noteId], {
+		reason: "note:revert",
+	});
+
 	return c.json({
 		note: {
 			id: noteId,
-			title: version.title,
+			title,
 			content: version.content,
 			summary,
 			tags: version.tags,
@@ -538,7 +658,11 @@ app.post("/api/notes", createNoteValidator, async (c) => {
 
 	const input = c.req.valid("json");
 	const noteId = crypto.randomUUID();
-	const title = input.title && input.title.length > 0 ? input.title : "Untitled note";
+	const title = sanitizeTitleForStorage(
+		input.title && input.title.length > 0
+			? input.title
+			: deriveNoteTitleFromContent(input.content),
+	);
 	const now = Date.now();
 
 	await c.env.DB.prepare(
@@ -565,22 +689,20 @@ app.post("/api/notes", createNoteValidator, async (c) => {
 			}),
 		});
 
-		const organizationAgent = await getAgentByName<Env, OrganizationAgent>(
-			c.env.ORGANIZATION_AGENT,
-			user.id,
-		);
-
 		if (input.content.trim().length > 0) {
-			await organizationAgent.fetch("https://organization-agent/internal", {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-				},
-				body: JSON.stringify({
-					action: "run_organize",
-					noteIds: [noteId],
-				}),
+			void triggerOrganizationRefresh(c.env, user.id, [noteId], {
+				reason: "note:create",
 			});
+			scheduleAutoRewriteForNote(
+				c.env,
+				{
+					userId: user.id,
+					noteId,
+					expectedUpdatedAt: now,
+					reason: "note:create",
+				},
+				{ executionCtx: getExecutionCtxSafe(c) },
+			);
 		}
 	} catch (error) {
 		console.error("Failed to notify agents", error);
@@ -616,11 +738,14 @@ app.put("/api/notes/:noteId", noteIdParamValidator, updateNoteValidator, async (
 	}
 
 	const now = Date.now();
-	const title = input.title && input.title.length > 0 ? input.title : existing.title;
+	const hasExplicitTitle = Boolean(input.title && input.title.length > 0);
+	const title = sanitizeTitleForStorage(
+		hasExplicitTitle ? (input.title as string) : existing.title,
+	);
 	const summary = input.content.replace(/\s+/g, " ").trim().slice(0, 240);
 
 	await c.env.DB.prepare(
-		"UPDATE notes SET title = ?1, content = ?2, summary = ?3, updated_at = ?4 WHERE id = ?5 AND user_id = ?6 AND deleted_at IS NULL",
+		"UPDATE notes SET title = ?1, content = ?2, summary = ?3, updated_at = ?4, processed_at = NULL WHERE id = ?5 AND user_id = ?6 AND deleted_at IS NULL",
 	)
 		.bind(title, input.content, summary, now, noteId, user.id)
 		.run();
@@ -652,6 +777,10 @@ app.put("/api/notes/:noteId", noteIdParamValidator, updateNoteValidator, async (
 	} catch (error) {
 		console.error("Failed to notify index agent for note update", error);
 	}
+
+	void triggerOrganizationRefresh(c.env, user.id, [noteId], {
+		reason: "note:update",
+	});
 
 	return c.json({
 		note: {
@@ -838,6 +967,31 @@ app.post("/api/collections/lifecycle", collectionLifecycleValidator, async (c) =
 	}
 
 	const input = c.req.valid("json");
+	if (input.action === "run_organize") {
+		let noteIds = normalizeNoteIds(input.noteIds ?? []);
+		if (noteIds.length === 0) {
+			const pending = await c.env.DB.prepare(
+				"SELECT id FROM notes WHERE user_id = ?1 AND deleted_at IS NULL AND processed_at IS NULL ORDER BY updated_at DESC LIMIT 50",
+			)
+				.bind(user.id)
+				.all<{ id: string }>();
+			noteIds = normalizeNoteIds((pending.results ?? []).map((row) => row.id));
+		}
+
+		if (noteIds.length === 0) {
+			return c.json({ ok: true, workflowTriggered: false, noteIds: [] });
+		}
+
+		const result = await triggerOrganizationRefresh(c.env, user.id, noteIds, {
+			reason: "collections:lifecycle:run_organize",
+		});
+		return c.json({
+			ok: true,
+			workflowTriggered: result.triggered,
+			noteIds: result.noteIds,
+		});
+	}
+
 	const organizationAgent = await getAgentByName<Env, OrganizationAgent>(
 		c.env.ORGANIZATION_AGENT,
 		user.id,
@@ -855,6 +1009,224 @@ app.post("/api/collections/lifecycle", collectionLifecycleValidator, async (c) =
 	}
 
 	return c.json(await response.json());
+});
+
+app.post("/api/workflows/fanout/run", runFanOutValidator, async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const input = c.req.valid("json");
+	let fanOutInput = input.input?.trim() ?? "";
+	if (input.sourceNoteId) {
+		const sourceNote = await c.env.DB.prepare(
+			"SELECT content FROM notes WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL",
+		)
+			.bind(input.sourceNoteId, user.id)
+			.first<{ content: string }>();
+		if (!sourceNote) {
+			return c.json({ error: "Source note not found" }, 404);
+		}
+
+		if (fanOutInput.length === 0) {
+			fanOutInput = sourceNote.content.trim();
+		}
+	}
+
+	if (fanOutInput.length === 0) {
+		return c.json({ error: "input is required" }, 400);
+	}
+
+	let targetNoteIds = normalizeNoteIds(input.targetNoteIds ?? []);
+	if (targetNoteIds.length === 0) {
+		const recent = await c.env.DB.prepare(
+			"SELECT id FROM notes WHERE user_id = ?1 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 6",
+		)
+			.bind(user.id)
+			.all<{ id: string }>();
+		targetNoteIds = normalizeNoteIds(
+			(recent.results ?? [])
+				.map((row) => row.id)
+				.filter((noteId) => noteId !== input.sourceNoteId)
+				.slice(0, 5),
+		);
+	}
+
+	if (targetNoteIds.length === 0) {
+		return c.json({ ok: true, workflow: null, targetNoteIds: [] });
+	}
+
+	const organizationAgent = await getAgentByName<Env, OrganizationAgent>(
+		c.env.ORGANIZATION_AGENT,
+		user.id,
+	);
+	const response = await organizationAgent.fetch("https://organization-agent/internal", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			action: "run_fanout",
+			targetNoteIds,
+			input: fanOutInput,
+		}),
+	});
+
+	if (!response.ok) {
+		return c.json({ error: "Fan-out workflow trigger failed" }, 502);
+	}
+
+	const payload = (await response.json()) as { workflow?: string | null };
+	return c.json({ ok: true, workflow: payload.workflow ?? null, targetNoteIds });
+});
+
+app.get("/api/contradictions", async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const rows = await c.env.DB.prepare(
+		`SELECT fc.id,
+				fc.status,
+				fc.updated_at,
+				fc.resolution_reason,
+				fa.id AS fact_a_id,
+				fa.fact AS fact_a_text,
+				fb.id AS fact_b_id,
+				fb.fact AS fact_b_text
+		 FROM fact_contradictions fc
+		 INNER JOIN facts fa ON fa.id = fc.fact_a_id
+		 INNER JOIN facts fb ON fb.id = fc.fact_b_id
+		 WHERE fc.user_id = ?1 AND fc.status = 'open'
+		 ORDER BY fc.updated_at DESC
+		 LIMIT 100`,
+	)
+		.bind(user.id)
+		.all<{
+			id: string;
+			status: string;
+			updated_at: number;
+			resolution_reason: string | null;
+			fact_a_id: string;
+			fact_a_text: string;
+			fact_b_id: string;
+			fact_b_text: string;
+		}>();
+
+	return c.json({
+		contradictions: (rows.results ?? []).map((row) => ({
+			id: row.id,
+			status: row.status,
+			updatedAt: row.updated_at,
+			resolutionReason: row.resolution_reason,
+			factA: {
+				id: row.fact_a_id,
+				text: row.fact_a_text,
+			},
+			factB: {
+				id: row.fact_b_id,
+				text: row.fact_b_text,
+			},
+		})),
+	});
+});
+
+app.post("/api/contradictions/analyze", contradictionAnalyzeValidator, async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const { contradictionId } = c.req.valid("json");
+	const contradiction = await c.env.DB.prepare(
+		`SELECT fc.id,
+				fa.id AS fact_a_id,
+				fa.fact AS fact_a_text,
+				fb.id AS fact_b_id,
+				fb.fact AS fact_b_text
+		 FROM fact_contradictions fc
+		 INNER JOIN facts fa ON fa.id = fc.fact_a_id
+		 INNER JOIN facts fb ON fb.id = fc.fact_b_id
+		 WHERE fc.id = ?1 AND fc.user_id = ?2 AND fc.status = 'open'`,
+	)
+		.bind(contradictionId, user.id)
+		.first<{
+			id: string;
+			fact_a_id: string;
+			fact_a_text: string;
+			fact_b_id: string;
+			fact_b_text: string;
+		}>();
+
+	if (!contradiction) {
+		return c.json({ error: "Open contradiction not found" }, 404);
+	}
+
+	const organizationAgent = await getAgentByName<Env, OrganizationAgent>(
+		c.env.ORGANIZATION_AGENT,
+		user.id,
+	);
+	const response = await organizationAgent.fetch("https://organization-agent/internal", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			action: "run_contradiction",
+			factA: {
+				id: contradiction.fact_a_id,
+				text: contradiction.fact_a_text,
+			},
+			factB: {
+				id: contradiction.fact_b_id,
+				text: contradiction.fact_b_text,
+			},
+		}),
+	});
+
+	if (!response.ok) {
+		return c.json({ error: "Contradiction workflow trigger failed" }, 502);
+	}
+
+	const payload = (await response.json()) as { workflow?: string | null };
+	return c.json({
+		ok: true,
+		workflowId: payload.workflow ?? null,
+		contradictionId,
+	});
+});
+
+app.post("/api/contradictions/resolve", contradictionResolveValidator, async (c) => {
+	const user = await getSessionUser(c.req.raw);
+	if (!user) {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const input = c.req.valid("json");
+	const organizationAgent = await getAgentByName<Env, OrganizationAgent>(
+		c.env.ORGANIZATION_AGENT,
+		user.id,
+	);
+	const response = await organizationAgent.fetch("https://organization-agent/internal", {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			action: "resolve_contradiction",
+			workflowId: input.workflowId,
+			keep: input.keep,
+			reason: input.reason,
+		}),
+	});
+
+	if (!response.ok) {
+		return c.json({ error: "Contradiction resolution failed" }, 502);
+	}
+
+	return c.json({ ok: true });
 });
 
 app.get("/api/surfacing/digest", async (c) => {

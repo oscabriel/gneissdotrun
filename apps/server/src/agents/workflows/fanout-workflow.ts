@@ -52,7 +52,7 @@ export async function runFanOutPass(
 
 		const merged = [existing.content.trim(), input.trim()].filter(Boolean).join("\n\n").trim();
 		await env.DB.prepare(
-			"UPDATE notes SET content = ?1, summary = ?2, updated_at = ?3 WHERE id = ?4 AND user_id = ?5 AND deleted_at IS NULL",
+			"UPDATE notes SET content = ?1, summary = ?2, updated_at = ?3, processed_at = NULL WHERE id = ?4 AND user_id = ?5 AND deleted_at IS NULL",
 		)
 			.bind(merged, compactSummary(merged), now, noteId, userId)
 			.run();

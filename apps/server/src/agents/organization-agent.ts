@@ -12,6 +12,22 @@ interface OrganizeParams {
 	noteIds?: string[];
 }
 
+interface FanOutParams {
+	targetNoteIds: string[];
+	input: string;
+}
+
+interface RunContradictionParams {
+	factA: {
+		id: string;
+		text: string;
+	};
+	factB: {
+		id: string;
+		text: string;
+	};
+}
+
 interface ContradictionResolution {
 	workflowId: string;
 	keep: "factA" | "factB";
@@ -66,11 +82,31 @@ interface CollectionListItem {
 }
 
 interface CollectionLifecyclePayload {
-	action: "set_collection_status" | "rename_collection" | "refresh_collections" | "run_organize";
+	action:
+		| "set_collection_status"
+		| "rename_collection"
+		| "refresh_collections"
+		| "run_organize"
+		| "run_fanout"
+		| "run_contradiction"
+		| "resolve_contradiction";
 	collectionId?: string;
 	status?: CollectionStatus;
 	title?: string;
 	noteIds?: string[];
+	targetNoteIds?: string[];
+	input?: string;
+	factA?: {
+		id: string;
+		text: string;
+	};
+	factB?: {
+		id: string;
+		text: string;
+	};
+	workflowId?: string;
+	keep?: "factA" | "factB";
+	reason?: string;
 }
 
 export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
@@ -160,6 +196,10 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 		}
 
 		return "active";
+	}
+
+	private normalizeNoteIds(noteIds: string[] = []): string[] {
+		return Array.from(new Set(noteIds.map((noteId) => noteId.trim()).filter(Boolean)));
 	}
 
 	private async fetchCollectionsFromDb(): Promise<CollectionListItem[]> {
@@ -308,7 +348,20 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 	@callable()
 	async runOrganizeWorkflow(params: OrganizeParams = {}) {
 		const maxAttempts = WORKFLOW_START_RETRY.maxAttempts;
-		const noteIds = params.noteIds ?? [];
+		let noteIds = this.normalizeNoteIds(params.noteIds ?? []);
+
+		if (noteIds.length === 0) {
+			const pending = await this.env.DB.prepare(
+				"SELECT id FROM notes WHERE user_id = ?1 AND deleted_at IS NULL AND processed_at IS NULL ORDER BY updated_at DESC LIMIT 50",
+			)
+				.bind(this.name)
+				.all<{ id: string }>();
+			noteIds = this.normalizeNoteIds((pending.results ?? []).map((row) => row.id));
+		}
+
+		if (noteIds.length === 0) {
+			return null;
+		}
 
 		try {
 			return await this.retry(
@@ -335,6 +388,82 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 				maxAttempts,
 				workflowId: null,
 				noteId: noteIds[0] ?? null,
+				error,
+			});
+			throw error;
+		}
+	}
+
+	@callable()
+	async runFanOutWorkflow(params: FanOutParams) {
+		const maxAttempts = WORKFLOW_START_RETRY.maxAttempts;
+		const targetNoteIds = this.normalizeNoteIds(params.targetNoteIds ?? []);
+		const input = params.input.trim();
+		if (!targetNoteIds.length || !input) {
+			return null;
+		}
+
+		try {
+			return await this.retry(
+				async () =>
+					this.runWorkflow("FANOUT_WORKFLOW", {
+						userId: this.name,
+						targetNoteIds,
+						input,
+					}),
+				{
+					maxAttempts,
+					baseDelayMs: WORKFLOW_START_RETRY.baseDelayMs,
+					maxDelayMs: WORKFLOW_START_RETRY.maxDelayMs,
+					shouldRetry: (error, nextAttempt) =>
+						this.shouldRetryTransient(error, nextAttempt, {
+							routeKind: "run_fanout",
+							maxAttempts,
+							noteId: targetNoteIds[0],
+						}),
+				},
+			);
+		} catch (error) {
+			this.logRetryExhausted({
+				routeKind: "run_fanout",
+				maxAttempts,
+				workflowId: null,
+				noteId: targetNoteIds[0] ?? null,
+				error,
+			});
+			throw error;
+		}
+	}
+
+	@callable()
+	async runContradictionWorkflow(params: RunContradictionParams) {
+		const maxAttempts = WORKFLOW_START_RETRY.maxAttempts;
+
+		try {
+			return await this.retry(
+				async () =>
+					this.runWorkflow("CONTRADICTION_WORKFLOW", {
+						factA: params.factA,
+						factB: params.factB,
+					}),
+				{
+					maxAttempts,
+					baseDelayMs: WORKFLOW_START_RETRY.baseDelayMs,
+					maxDelayMs: WORKFLOW_START_RETRY.maxDelayMs,
+					shouldRetry: (error, nextAttempt) =>
+						this.shouldRetryTransient(error, nextAttempt, {
+							routeKind: "run_contradiction",
+							maxAttempts,
+							noteId: params.factA.id,
+						}),
+				},
+			);
+		} catch (error) {
+			this.logRetryExhausted({
+				routeKind: "run_contradiction",
+				maxAttempts,
+				workflowId: null,
+				noteId: params.factA.id,
 				error,
 			});
 			throw error;
@@ -503,15 +632,47 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 		}
 
 		if (payload.action === "run_organize") {
-			const noteIds = Array.from(new Set(payload.noteIds ?? [])).filter(
-				(noteId) => noteId.length > 0,
-			);
-			if (noteIds.length === 0) {
-				return Response.json({ error: "noteIds are required" }, { status: 400 });
+			const workflow = await this.runOrganizeWorkflow({
+				noteIds: payload.noteIds ?? [],
+			});
+			return Response.json({ ok: true, workflow });
+		}
+
+		if (payload.action === "run_fanout") {
+			if (!payload.input) {
+				return Response.json({ error: "input is required" }, { status: 400 });
 			}
 
-			const workflow = await this.runOrganizeWorkflow({ noteIds });
+			const workflow = await this.runFanOutWorkflow({
+				targetNoteIds: payload.targetNoteIds ?? [],
+				input: payload.input,
+			});
 			return Response.json({ ok: true, workflow });
+		}
+
+		if (payload.action === "run_contradiction") {
+			if (!payload.factA || !payload.factB) {
+				return Response.json({ error: "factA and factB are required" }, { status: 400 });
+			}
+
+			const workflow = await this.runContradictionWorkflow({
+				factA: payload.factA,
+				factB: payload.factB,
+			});
+			return Response.json({ ok: true, workflow });
+		}
+
+		if (payload.action === "resolve_contradiction") {
+			if (!payload.workflowId || !payload.keep) {
+				return Response.json({ error: "workflowId and keep are required" }, { status: 400 });
+			}
+
+			await this.resolveContradiction({
+				workflowId: payload.workflowId,
+				keep: payload.keep,
+				reason: payload.reason,
+			});
+			return Response.json({ ok: true });
 		}
 
 		return Response.json({ error: "Invalid action" }, { status: 400 });
