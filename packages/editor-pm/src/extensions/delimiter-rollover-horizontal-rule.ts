@@ -19,7 +19,9 @@ export type HorizontalRuleEditTarget = {
 	cursor: "start" | "end";
 };
 
-export function findActiveHorizontalRuleRange(state: EditorState): ActiveHorizontalRuleRange | null {
+export function findActiveHorizontalRuleRange(
+	state: EditorState,
+): ActiveHorizontalRuleRange | null {
 	const { selection } = state;
 
 	if (selection instanceof NodeSelection && selection.node.type.name === "horizontalRule") {

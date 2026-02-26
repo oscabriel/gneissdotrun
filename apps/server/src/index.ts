@@ -15,11 +15,7 @@ import { validator } from "hono/validator";
 import z from "zod";
 
 import { registerAgentRoutes } from "./agents-routing";
-import {
-	type CaptureLifecycleEvent,
-	executeCapture,
-	toCaptureErrorEnvelope,
-} from "./capture";
+import { type CaptureLifecycleEvent, executeCapture, toCaptureErrorEnvelope } from "./capture";
 import {
 	createNoteHistoryEvent,
 	createNoteVersion,

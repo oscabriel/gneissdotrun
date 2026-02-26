@@ -359,9 +359,7 @@ describe("delimiter rollover markdown projection", () => {
 						content: [
 							{
 								type: "listItem",
-								content: [
-									{ type: "paragraph", content: [{ type: "text", text: "item a" }] },
-								],
+								content: [{ type: "paragraph", content: [{ type: "text", text: "item a" }] }],
 							},
 						],
 					},

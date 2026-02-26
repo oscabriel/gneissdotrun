@@ -427,8 +427,7 @@ function commitListLineSourceBlockMode(
 				const attrs =
 					targetListTypeName === "orderedList"
 						? {
-								start:
-									itemIndex === 0 ? (parsed.start ?? currentStart) : currentStart,
+								start: itemIndex === 0 ? (parsed.start ?? currentStart) : currentStart,
 							}
 						: {};
 				tr.setNodeMarkup(source.listPos, targetListType, attrs);

@@ -591,7 +591,9 @@ describe("UX-083 route execution outcomes", () => {
 		assert.equal(result.outcome.kind, "fan_out");
 		assert.equal(result.outcome.fanOut?.status, "skipped-no-targets");
 		assert.ok(
-			result.outcome.secondaryEffects?.some((effect) => effect.type === "fanout_skipped_no_targets"),
+			result.outcome.secondaryEffects?.some(
+				(effect) => effect.type === "fanout_skipped_no_targets",
+			),
 		);
 	});
 
