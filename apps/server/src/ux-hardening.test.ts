@@ -395,7 +395,13 @@ function decisionPayload(fixture: DecisionFixture): {
 	};
 }
 
-function createCaptureTestContext(fixture: DecisionFixture): {
+function createCaptureTestContext(
+	fixture: DecisionFixture,
+	overrides?: {
+		indexResponder?: (name: string, url: string, init?: RequestInit) => Promise<Response>;
+		organizationResponder?: (name: string, url: string, init?: RequestInit) => Promise<Response>;
+	},
+): {
 	db: FakeD1Database;
 	env: CaptureEnv;
 	indexNamespace: FakeDurableNamespace;
@@ -411,14 +417,16 @@ function createCaptureTestContext(fixture: DecisionFixture): {
 			}),
 	);
 	const indexNamespace = new FakeDurableNamespace(
-		async (_name, _url, _init) => new Response("{}", { status: 200 }),
+		overrides?.indexResponder ??
+			(async (_name, _url, _init) => new Response("{}", { status: 200 })),
 	);
 	const organizationNamespace = new FakeDurableNamespace(
-		async (_name, _url, _init) =>
-			new Response(JSON.stringify({ ok: true, workflow: "wf_test" }), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			}),
+		overrides?.organizationResponder ??
+			(async (_name, _url, _init) =>
+				new Response(JSON.stringify({ ok: true, workflow: "wf_test" }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				})),
 	);
 	const env = {
 		DB: db,
@@ -459,6 +467,27 @@ describe("UX-083 route execution outcomes", () => {
 		assert.ok(result.outcome.noteId);
 		assert.equal(db.listUserNotes(userId).length, 1);
 		assert.equal(indexNamespace.calls(userId).length, 1);
+	});
+
+	it("returns partial_success when note persistence succeeds but index upsert fails", async () => {
+		const { env } = createCaptureTestContext(
+			{ kind: "new_note" },
+			{
+				indexResponder: async () => new Response("{}", { status: 503 }),
+			},
+		);
+		const result = await executeCapture(env, {
+			userId,
+			userInput: "Capture with downstream failure",
+		});
+
+		assert.equal(result.outcome.kind, "new_note");
+		assert.equal(result.outcome.result, "partial_success");
+		assert.ok(
+			result.outcome.sideEffects?.some(
+				(effect) => effect.name === "index_upsert" && effect.status === "failed",
+			),
+		);
 	});
 
 	it("executes update_existing against the active note", async () => {
@@ -547,8 +576,64 @@ describe("UX-083 route execution outcomes", () => {
 		assert.equal(result.decision.kind, "fan_out");
 		assert.equal(result.outcome.kind, "fan_out");
 		assert.equal(result.outcome.uiAction, "open_note");
+		assert.equal(result.outcome.fanOut?.status, "queued");
 		assert.ok(result.outcome.noteId);
 		assert.ok(result.outcome.secondaryEffects?.some((effect) => effect.type === "queued_fanout"));
+	});
+
+	it("marks fan_out as skipped-no-targets when no secondary notes are available", async () => {
+		const { env } = createCaptureTestContext({ kind: "fan_out" });
+		const result = await executeCapture(env, {
+			userId,
+			userInput: "Single-note fanout request",
+		});
+
+		assert.equal(result.outcome.kind, "fan_out");
+		assert.equal(result.outcome.fanOut?.status, "skipped-no-targets");
+		assert.ok(
+			result.outcome.secondaryEffects?.some((effect) => effect.type === "fanout_skipped_no_targets"),
+		);
+	});
+
+	it("marks fan_out as queue_failed when workflow trigger fails", async () => {
+		const { db, env } = createCaptureTestContext(
+			{ kind: "fan_out" },
+			{
+				organizationResponder: async (_name, _url, init) => {
+					const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
+					if (body.action === "run_fanout") {
+						return new Response(JSON.stringify({ error: "boom" }), { status: 502 });
+					}
+					return new Response(JSON.stringify({ ok: true, workflow: "wf_test" }), {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					});
+				},
+			},
+		);
+		db.seedNote({
+			id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			userId,
+			title: "Context note",
+			content: "Context",
+		});
+
+		const result = await executeCapture(env, {
+			userId,
+			userInput: "Fan out with failure",
+		});
+
+		assert.equal(result.outcome.kind, "fan_out");
+		assert.equal(result.outcome.fanOut?.status, "queue_failed");
+		assert.equal(result.outcome.result, "partial_success");
+		assert.ok(
+			result.outcome.secondaryEffects?.some((effect) => effect.type === "fanout_queue_failed"),
+		);
+		assert.ok(
+			result.outcome.sideEffects?.some(
+				(effect) => effect.name === "fanout_queue" && effect.status === "failed",
+			),
+		);
 	});
 
 	it("executes allowlisted workspace_action and keeps canvas blank", async () => {

@@ -15,7 +15,11 @@ import { validator } from "hono/validator";
 import z from "zod";
 
 import { registerAgentRoutes } from "./agents-routing";
-import { executeCapture, toCaptureErrorEnvelope } from "./capture";
+import {
+	type CaptureLifecycleEvent,
+	executeCapture,
+	toCaptureErrorEnvelope,
+} from "./capture";
 import {
 	createNoteHistoryEvent,
 	createNoteVersion,
@@ -578,6 +582,10 @@ app.post("/api/capture", captureValidator, async (c) => {
 					controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
 				};
 
+				const writeLifecycleEvent = (event: CaptureLifecycleEvent) => {
+					writeEvent(event);
+				};
+
 				void (async () => {
 					try {
 						const result = await executeCapture(
@@ -588,6 +596,7 @@ app.post("/api/capture", captureValidator, async (c) => {
 								userInput: input.userInput,
 							},
 							{
+								onLifecycleEvent: writeLifecycleEvent,
 								onRewriteProgress: (update) => {
 									writeEvent({
 										type: "rewrite_progress",

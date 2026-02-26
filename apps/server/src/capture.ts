@@ -1,5 +1,7 @@
 import type {
 	CaptureErrorCode,
+	CaptureSideEffect,
+	FanOutQueueStatus,
 	RouteExecutionKind,
 	RouteExecutionOutcome,
 	RouteExecutionSecondaryEffect,
@@ -7,7 +9,7 @@ import type {
 import { getAgentByName } from "agents";
 
 import type { IndexAgent, OrganizationAgent, RouterAgent } from "./agents";
-import { generateRewriteText } from "./agents/shared";
+import { executeRewrite, splitIntoChunks } from "./agents/shared";
 import type { RoutingDecision } from "./agents/shared";
 import { createAuditLog } from "./audit";
 import { createNoteHistoryEvent, createNoteVersion, ensureHistorySchema } from "./history";
@@ -34,8 +36,27 @@ export type RewriteProgressUpdate =
 			text: string;
 	  };
 
+export type CaptureLifecycleEvent =
+	| {
+			type: "capture_started";
+			noteId?: string;
+	  }
+	| {
+			type: "rewrite_started";
+			noteId?: string;
+	  }
+	| {
+			type: "rewrite_done";
+			noteId?: string;
+	  }
+	| {
+			type: "persisted";
+			noteIds: string[];
+	  };
+
 interface CaptureExecutionOptions {
 	onRewriteProgress?: (update: RewriteProgressUpdate) => Promise<void> | void;
+	onLifecycleEvent?: (event: CaptureLifecycleEvent) => Promise<void> | void;
 }
 
 interface CaptureExecutionResult {
@@ -75,6 +96,84 @@ interface WorkspaceActionResult {
 	label: string;
 	toastMessage: string;
 	effectId?: string;
+	sideEffects?: CaptureSideEffect[];
+}
+
+interface NoteMutationResult {
+	note: UserNote;
+	indexSideEffect: CaptureSideEffect;
+}
+
+function toErrorDetail(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+
+	return "Unknown error";
+}
+
+function normalizeOutcome(outcome: RouteExecutionOutcome): RouteExecutionOutcome {
+	const sideEffects = outcome.sideEffects ?? [];
+	const hasFailedSideEffects = sideEffects.some((effect) => effect.status === "failed");
+
+	return {
+		...outcome,
+		secondaryEffects: outcome.secondaryEffects ?? [],
+		sideEffects,
+		result: hasFailedSideEffects ? "partial_success" : "success",
+	};
+}
+
+async function safeIndexUpsert(
+	env: Env,
+	userId: string,
+	note: UserNote,
+): Promise<CaptureSideEffect> {
+	try {
+		await notifyIndexUpsert(env, userId, note);
+		return {
+			name: "index_upsert",
+			status: "ok",
+			detail: `note:${note.id}`,
+		};
+	} catch (error) {
+		console.error("capture.index.upsert_failed", {
+			error,
+			userId,
+			noteId: note.id,
+		});
+		return {
+			name: "index_upsert",
+			status: "failed",
+			detail: `note:${note.id}:${toErrorDetail(error)}`,
+		};
+	}
+}
+
+async function safeIndexRemove(
+	env: Env,
+	userId: string,
+	noteId: string,
+): Promise<CaptureSideEffect> {
+	try {
+		await notifyIndexRemove(env, userId, noteId);
+		return {
+			name: "index_remove",
+			status: "ok",
+			detail: `note:${noteId}`,
+		};
+	} catch (error) {
+		console.error("capture.index.remove_failed", {
+			error,
+			userId,
+			noteId,
+		});
+		return {
+			name: "index_remove",
+			status: "failed",
+			detail: `note:${noteId}:${toErrorDetail(error)}`,
+		};
+	}
 }
 
 const CONFIDENCE_HIGH = 0.75;
@@ -129,13 +228,6 @@ function parseTags(raw: string): string[] {
 	} catch {
 		return [];
 	}
-}
-
-function normalizeOutcome(outcome: RouteExecutionOutcome): RouteExecutionOutcome {
-	return {
-		...outcome,
-		secondaryEffects: outcome.secondaryEffects ?? [],
-	};
 }
 
 function clampConfidence(value: number): number {
@@ -263,6 +355,7 @@ async function rewriteNoteContent(
 	currentNoteId?: string,
 	options?: {
 		onProgress?: (update: RewriteProgressUpdate) => Promise<void> | void;
+		onLifecycleEvent?: (event: CaptureLifecycleEvent) => Promise<void> | void;
 	},
 ): Promise<string> {
 	const recentNotes = await listRecentNotes(env, userId, 40);
@@ -274,8 +367,13 @@ async function rewriteNoteContent(
 		return "";
 	}
 
+	await options?.onLifecycleEvent?.({
+		type: "rewrite_started",
+		noteId: currentNoteId,
+	});
+
 	try {
-		const response = await generateRewriteText({
+		const response = await executeRewrite({
 			noteContent: currentContent,
 			userInput,
 			routing: toRoutingDecision(decision),
@@ -286,11 +384,23 @@ async function rewriteNoteContent(
 					return;
 				}
 
-				await options.onProgress({
-					mode: "append",
-					text: delta,
-				});
+				for (const chunk of splitIntoChunks(delta)) {
+					if (!chunk) {
+						continue;
+					}
+
+					await options.onProgress({
+						mode: "append",
+						text: chunk,
+					});
+				}
 			},
+		});
+
+		console.info("capture.rewrite.runtime", {
+			runtime: response.runtime,
+			routeKind: decision.kind,
+			noteId: currentNoteId ?? null,
 		});
 
 		const rewritten = enforceExistingWikiLinks(
@@ -298,6 +408,10 @@ async function rewriteNoteContent(
 			wikiLinkCandidates,
 		);
 		if (rewritten.length > 0) {
+			await options?.onLifecycleEvent?.({
+				type: "rewrite_done",
+				noteId: currentNoteId,
+			});
 			return rewritten;
 		}
 	} catch (error) {
@@ -319,11 +433,20 @@ async function rewriteNoteContent(
 			mode: "replace",
 			text: safeFallback,
 		});
+		await options?.onLifecycleEvent?.({
+			type: "rewrite_done",
+			noteId: currentNoteId,
+		});
 
 		return safeFallback;
 	}
 
-	return enforceExistingWikiLinks(fallback, wikiLinkCandidates);
+	const safeFallback = enforceExistingWikiLinks(fallback, wikiLinkCandidates);
+	await options?.onLifecycleEvent?.({
+		type: "rewrite_done",
+		noteId: currentNoteId,
+	});
+	return safeFallback;
 }
 
 function heuristicDecision(
@@ -534,7 +657,7 @@ async function listRecentNotes(env: Env, userId: string, limit: number): Promise
 
 async function notifyIndexUpsert(env: Env, userId: string, note: UserNote): Promise<void> {
 	const indexAgent = await getAgentByName<Env, IndexAgent>(env.INDEX_AGENT, userId);
-	await indexAgent.fetch("https://index-agent/internal", {
+	const response = await indexAgent.fetch("https://index-agent/internal", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
@@ -549,11 +672,15 @@ async function notifyIndexUpsert(env: Env, userId: string, note: UserNote): Prom
 			},
 		}),
 	});
+
+	if (!response.ok) {
+		throw new Error(`Index upsert failed (${response.status})`);
+	}
 }
 
 async function notifyIndexRemove(env: Env, userId: string, noteId: string): Promise<void> {
 	const indexAgent = await getAgentByName<Env, IndexAgent>(env.INDEX_AGENT, userId);
-	await indexAgent.fetch("https://index-agent/internal", {
+	const response = await indexAgent.fetch("https://index-agent/internal", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
@@ -563,6 +690,10 @@ async function notifyIndexRemove(env: Env, userId: string, noteId: string): Prom
 			noteId,
 		}),
 	});
+
+	if (!response.ok) {
+		throw new Error(`Index remove failed (${response.status})`);
+	}
 }
 
 async function triggerFanOutWorkflow(
@@ -598,7 +729,11 @@ async function triggerFanOutWorkflow(
 	}
 }
 
-async function createNote(env: Env, userId: string, rawContent: string): Promise<UserNote> {
+async function createNote(
+	env: Env,
+	userId: string,
+	rawContent: string,
+): Promise<NoteMutationResult> {
 	const now = Date.now();
 	const content = stripSlashCommandLines(rawContent).trim();
 	const title = sanitizeTitleForStorage(deriveNoteTitleFromContent(content));
@@ -621,8 +756,11 @@ async function createNote(env: Env, userId: string, rawContent: string): Promise
 		createdAt: now,
 	};
 
-	await notifyIndexUpsert(env, userId, note);
-	return note;
+	const indexSideEffect = await safeIndexUpsert(env, userId, note);
+	return {
+		note,
+		indexSideEffect,
+	};
 }
 
 async function updateNote(
@@ -631,7 +769,7 @@ async function updateNote(
 	note: UserNote,
 	rawInput: string,
 	mode: "append" | "replace",
-): Promise<UserNote> {
+): Promise<NoteMutationResult> {
 	const now = Date.now();
 	const cleanedInput = stripSlashCommandLines(rawInput).trim();
 
@@ -658,8 +796,11 @@ async function updateNote(
 		updatedAt: now,
 	};
 
-	await notifyIndexUpsert(env, userId, updated);
-	return updated;
+	const indexSideEffect = await safeIndexUpsert(env, userId, updated);
+	return {
+		note: updated,
+		indexSideEffect,
+	};
 }
 
 async function classifyDecision(
@@ -737,19 +878,21 @@ async function executeWorkspaceAction(
 		}
 
 		const now = Date.now();
+		const sideEffects: CaptureSideEffect[] = [];
 		for (const noteId of targetIds) {
 			await env.DB.prepare(
 				"UPDATE notes SET deleted_at = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4 AND deleted_at IS NULL",
 			)
 				.bind(now, now, noteId, userId)
 				.run();
-			await notifyIndexRemove(env, userId, noteId);
+			sideEffects.push(await safeIndexRemove(env, userId, noteId));
 		}
 
 		return {
 			label: "archive_note(s)",
 			toastMessage: `Archived ${targetIds.length} note${targetIds.length === 1 ? "" : "s"}.`,
 			effectId: targetIds[0],
+			sideEffects,
 		};
 	}
 
@@ -888,8 +1031,15 @@ function buildHistoryActionSummary(
 			return "Applied a correction to the note.";
 		case "split":
 			return "Split capture into multiple notes.";
-		case "fan_out":
+		case "fan_out": {
+			if (outcome.fanOut?.status === "queue_failed") {
+				return "Accepted fan-out but queueing secondary workflow failed.";
+			}
+			if (outcome.fanOut?.status === "skipped-no-targets") {
+				return "Accepted fan-out with no secondary targets available.";
+			}
 			return "Accepted fan-out and queued fan-out workflow.";
+		}
 		case "workspace_action":
 			return "Applied a workspace action.";
 		case "store_preference":
@@ -968,6 +1118,36 @@ function collectOrganizeRefreshNoteIds(result: CaptureExecutionResult): string[]
 	return [...noteIds];
 }
 
+async function safeTriggerOrganizationRefresh(
+	env: Env,
+	userId: string,
+	noteIds: string[],
+	reason: string,
+): Promise<CaptureSideEffect> {
+	if (noteIds.length === 0) {
+		return {
+			name: "organize_refresh",
+			status: "skipped",
+			detail: "no-note-ids",
+		};
+	}
+
+	const result = await triggerOrganizationRefresh(env, userId, noteIds, { reason });
+	if (result.triggered) {
+		return {
+			name: "organize_refresh",
+			status: "ok",
+			detail: `count:${result.noteIds.length}`,
+		};
+	}
+
+	return {
+		name: "organize_refresh",
+		status: "failed",
+		detail: `count:${result.noteIds.length}`,
+	};
+}
+
 async function recordCaptureHistory(
 	env: Env,
 	request: CaptureRequestInput,
@@ -1006,6 +1186,41 @@ async function recordCaptureHistory(
 			actionSummary,
 			versionId,
 		});
+	}
+}
+
+async function safeRecordCaptureHistory(
+	env: Env,
+	request: CaptureRequestInput,
+	decision: CaptureExecutionResult["decision"],
+	outcome: RouteExecutionOutcome,
+): Promise<CaptureSideEffect> {
+	if (collectHistoryNoteIds(request, decision, outcome).length === 0) {
+		return {
+			name: "history",
+			status: "skipped",
+			detail: "no-note-ids",
+		};
+	}
+
+	try {
+		await recordCaptureHistory(env, request, decision, outcome);
+		return {
+			name: "history",
+			status: "ok",
+		};
+	} catch (error) {
+		console.error("capture.history.persist_failed", {
+			error,
+			userId: request.userId,
+			routeKind: decision.kind,
+			noteId: outcome.noteId ?? null,
+		});
+		return {
+			name: "history",
+			status: "failed",
+			detail: toErrorDetail(error),
+		};
 	}
 }
 
@@ -1098,8 +1313,14 @@ export async function executeCapture(
 		throw captureError("INVALID_INPUT", "noteId is invalid for this user.", true, 400);
 	}
 
+	await options.onLifecycleEvent?.({
+		type: "capture_started",
+		noteId: request.noteId,
+	});
+
 	let decision = await classifyDecision(env, request.userId, request, targetNote);
 	const cleanedInput = stripSlashCommandLines(request.userInput).trim();
+	const executionSideEffects: CaptureSideEffect[] = [];
 
 	if (shouldForceRewriteForDuplicate(decision, targetNote, cleanedInput)) {
 		decision = {
@@ -1124,6 +1345,7 @@ export async function executeCapture(
 			undefined,
 			{
 				onProgress: options.onRewriteProgress,
+				onLifecycleEvent: options.onLifecycleEvent,
 			},
 		);
 		const created = await createNote(
@@ -1131,12 +1353,17 @@ export async function executeCapture(
 			request.userId,
 			rewritten || cleanedInput || request.userInput,
 		);
+		executionSideEffects.push(created.indexSideEffect);
+		await options.onLifecycleEvent?.({
+			type: "persisted",
+			noteIds: [created.note.id],
+		});
 		const outcome = normalizeOutcome({
 			kind: "new_note",
 			uiAction: "open_note",
-			noteId: created.id,
+			noteId: created.note.id,
 			toast,
-			secondaryEffects: [{ type: "created_note", id: created.id }],
+			secondaryEffects: [{ type: "created_note", id: created.note.id }],
 		});
 
 		return { decision, outcome };
@@ -1155,6 +1382,7 @@ export async function executeCapture(
 			note.id,
 			{
 				onProgress: options.onRewriteProgress,
+				onLifecycleEvent: options.onLifecycleEvent,
 			},
 		);
 		const updated = await updateNote(
@@ -1164,12 +1392,17 @@ export async function executeCapture(
 			rewritten || note.content,
 			"replace",
 		);
+		executionSideEffects.push(updated.indexSideEffect);
+		await options.onLifecycleEvent?.({
+			type: "persisted",
+			noteIds: [updated.note.id],
+		});
 		const outcome = normalizeOutcome({
 			kind: "update_existing",
 			uiAction: "open_note",
-			noteId: updated.id,
+			noteId: updated.note.id,
 			toast,
-			secondaryEffects: [{ type: "updated_note", id: updated.id }],
+			secondaryEffects: [{ type: "updated_note", id: updated.note.id }],
 		});
 
 		return { decision, outcome };
@@ -1218,6 +1451,7 @@ export async function executeCapture(
 					targetNote.id,
 					{
 						onProgress: options.onRewriteProgress,
+						onLifecycleEvent: options.onLifecycleEvent,
 					},
 				);
 				const updated = await updateNote(
@@ -1227,17 +1461,22 @@ export async function executeCapture(
 					rewritten || targetNote.content,
 					"replace",
 				);
+				executionSideEffects.push(updated.indexSideEffect);
+				await options.onLifecycleEvent?.({
+					type: "persisted",
+					noteIds: [updated.note.id],
+				});
 				result = {
 					decision,
 					outcome: normalizeOutcome({
 						kind: "correction",
 						uiAction: "open_note",
-						noteId: updated.id,
+						noteId: updated.note.id,
 						toast:
 							decision.confidence < CONFIDENCE_HIGH
 								? warningToast("Applied correction with medium confidence.")
 								: successToast("Applied correction."),
-						secondaryEffects: [{ type: "updated_note", id: updated.id }],
+						secondaryEffects: [{ type: "updated_note", id: updated.note.id }],
 					}),
 				};
 				break;
@@ -1262,10 +1501,17 @@ export async function executeCapture(
 						undefined,
 						{
 							onProgress: index === 0 ? options.onRewriteProgress : undefined,
+							onLifecycleEvent: options.onLifecycleEvent,
 						},
 					);
-					created.push(await createNote(env, request.userId, rewritten || segment));
+					const createdNote = await createNote(env, request.userId, rewritten || segment);
+					executionSideEffects.push(createdNote.indexSideEffect);
+					created.push(createdNote.note);
 				}
+				await options.onLifecycleEvent?.({
+					type: "persisted",
+					noteIds: created.map((note) => note.id),
+				});
 
 				const primaryId =
 					selectPrimaryNoteId(
@@ -1303,9 +1549,10 @@ export async function executeCapture(
 					targetNote?.id,
 					{
 						onProgress: options.onRewriteProgress,
+						onLifecycleEvent: options.onLifecycleEvent,
 					},
 				);
-				const primary = targetNote
+				const primaryResult = targetNote
 					? await updateNote(
 							env,
 							request.userId,
@@ -1318,20 +1565,46 @@ export async function executeCapture(
 							request.userId,
 							rewrittenPrimary || cleanedInput || request.userInput,
 						);
+				const primary = primaryResult.note;
+				executionSideEffects.push(primaryResult.indexSideEffect);
+				await options.onLifecycleEvent?.({
+					type: "persisted",
+					noteIds: [primary.id],
+				});
+
 				const recent = await listRecentNotes(env, request.userId, 6);
 				const fanoutTargets = recent
 					.map((note) => note.id)
 					.filter((noteId) => noteId !== primary.id)
 					.slice(0, 5);
-				const fanOutQueued = fanoutTargets.length > 0;
+				let fanOutStatus: FanOutQueueStatus = "queued";
+				let fanOutSideEffect: CaptureSideEffect;
 
-				if (fanOutQueued) {
+				if (fanoutTargets.length === 0) {
+					fanOutStatus = "skipped-no-targets";
+					fanOutSideEffect = {
+						name: "fanout_queue",
+						status: "skipped",
+						detail: "no-target-notes",
+					};
+				} else {
 					try {
 						await triggerFanOutWorkflow(env, request.userId, {
 							targetNoteIds: fanoutTargets,
 							input: cleanedInput || request.userInput,
 						});
+						fanOutSideEffect = {
+							name: "fanout_queue",
+							status: "ok",
+							detail: `count:${fanoutTargets.length}`,
+						};
 					} catch (error) {
+						fanOutStatus = "queue_failed";
+						fanOutSideEffect = {
+							name: "fanout_queue",
+							status: "failed",
+							detail: toErrorDetail(error),
+						};
 						console.error("capture.fanout.trigger_failed", {
 							error,
 							userId: request.userId,
@@ -1340,6 +1613,7 @@ export async function executeCapture(
 						});
 					}
 				}
+				executionSideEffects.push(fanOutSideEffect);
 
 				const primaryId =
 					selectPrimaryNoteId([
@@ -1357,13 +1631,22 @@ export async function executeCapture(
 						kind: "fan_out",
 						uiAction: "open_note",
 						noteId: primaryId,
-						toast: infoToast(
-							fanOutQueued
-								? "Fan-out accepted and queued in the background."
-								: "Fan-out accepted. No secondary notes available yet.",
-						),
+						fanOut: {
+							status: fanOutStatus,
+							targetNoteIds: fanoutTargets,
+						},
+						toast:
+							fanOutStatus === "queued"
+								? infoToast("Fan-out accepted and queued in the background.")
+								: fanOutStatus === "skipped-no-targets"
+									? infoToast("Fan-out accepted. No secondary notes available yet.")
+									: warningToast("Primary note updated, but fan-out queueing failed."),
 						secondaryEffects: [
-							...(fanOutQueued ? [{ type: "queued_fanout" as const, id: primaryId }] : []),
+							...(fanOutStatus === "queued"
+								? [{ type: "queued_fanout" as const, id: primaryId }]
+								: fanOutStatus === "skipped-no-targets"
+									? [{ type: "fanout_skipped_no_targets" as const, id: primaryId }]
+									: [{ type: "fanout_queue_failed" as const, id: primaryId }]),
 							...(targetNote ? [] : [{ type: "created_note" as const, id: primaryId }]),
 						],
 					}),
@@ -1387,12 +1670,18 @@ export async function executeCapture(
 					);
 				}
 
+				executionSideEffects.push(...(actionResult.sideEffects ?? []));
+				const actionHasFailures = (actionResult.sideEffects ?? []).some(
+					(effect) => effect.status === "failed",
+				);
 				result = {
 					decision,
 					outcome: normalizeOutcome({
 						kind: "workspace_action",
 						uiAction: "stay_blank",
-						toast: successToast(actionResult.toastMessage),
+						toast: actionHasFailures
+							? warningToast("Action applied, but index sync failed for one or more notes.")
+							: successToast(actionResult.toastMessage),
 						secondaryEffects: [
 							{ type: "action_executed", id: actionResult.effectId, label: actionResult.label },
 						],
@@ -1481,11 +1770,26 @@ export async function executeCapture(
 			}
 		}
 
-		await recordCaptureHistory(env, request, result.decision, result.outcome);
+		executionSideEffects.push(
+			await safeRecordCaptureHistory(env, request, result.decision, result.outcome),
+		);
 
-		void triggerOrganizationRefresh(env, request.userId, collectOrganizeRefreshNoteIds(result), {
-			reason: `capture:${result.decision.kind}`,
-		});
+		executionSideEffects.push(
+			await safeTriggerOrganizationRefresh(
+				env,
+				request.userId,
+				collectOrganizeRefreshNoteIds(result),
+				`capture:${result.decision.kind}`,
+			),
+		);
+
+		result = {
+			...result,
+			outcome: normalizeOutcome({
+				...result.outcome,
+				sideEffects: [...(result.outcome.sideEffects ?? []), ...executionSideEffects],
+			}),
+		};
 
 		const auditEvent = buildAuditEvent({
 			decision: result.decision,

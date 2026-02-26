@@ -19,6 +19,20 @@ interface GenerateRewriteTextResult {
 	text: string;
 }
 
+export type RewriteRuntime = "shared_pipeline_v1";
+
+export async function executeRewrite(input: GenerateRewriteTextInput): Promise<
+	GenerateRewriteTextResult & {
+		runtime: RewriteRuntime;
+	}
+> {
+	const result = await generateRewriteText(input);
+	return {
+		...result,
+		runtime: "shared_pipeline_v1",
+	};
+}
+
 const DEFAULT_REWRITE_MODEL = "gemini-2.5-flash";
 
 function resolveGoogleApiKey(): string | null {

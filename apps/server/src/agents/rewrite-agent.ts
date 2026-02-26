@@ -7,7 +7,7 @@ import {
 } from "ai";
 
 import {
-	generateRewriteText,
+	executeRewrite,
 	getLatestUserInput,
 	notifyIndexAgent,
 	persistNoteAndNotify,
@@ -32,6 +32,7 @@ interface RewriteRoutingData {
 	eventId: string;
 	requestId: string;
 	prompt: string;
+	runtime: "shared_pipeline_v1";
 	routing: RoutingDecision;
 	emittedAt: number;
 }
@@ -98,7 +99,7 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 					id,
 				});
 
-				const { prompt, text } = await generateRewriteText({
+				const { prompt, runtime, text } = await executeRewrite({
 					noteContent,
 					userInput: latestUserInput,
 					routing,
@@ -129,6 +130,7 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 					eventId: createRewriteRoutingEventId(requestId),
 					requestId,
 					prompt,
+					runtime,
 					routing,
 					emittedAt: Date.now(),
 				};

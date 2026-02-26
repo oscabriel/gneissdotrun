@@ -4,6 +4,7 @@ import type { OrganizationAgent } from "./agents";
 
 interface TriggerOrganizationRefreshOptions {
 	reason?: string;
+	dedupeKey?: string;
 }
 
 function normalizeNoteIds(noteIds: Array<string | null | undefined>): string[] {
@@ -39,6 +40,7 @@ export async function triggerOrganizationRefresh(
 			body: JSON.stringify({
 				action: "run_organize",
 				noteIds: normalizedNoteIds,
+				dedupeKey: options.dedupeKey,
 			}),
 		});
 		if (!response.ok) {

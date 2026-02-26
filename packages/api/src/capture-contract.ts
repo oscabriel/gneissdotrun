@@ -15,10 +15,25 @@ export type RouteExecutionKind = (typeof routeExecutionKinds)[number];
 export type RouteExecutionUiAction = "open_note" | "stay_blank" | "show_ephemeral" | "show_toast";
 
 export type RouteExecutionSecondaryEffect = {
-	type: "updated_note" | "created_note" | "queued_fanout" | "action_executed" | "preference_saved";
+	type:
+		| "updated_note"
+		| "created_note"
+		| "queued_fanout"
+		| "fanout_skipped_no_targets"
+		| "fanout_queue_failed"
+		| "action_executed"
+		| "preference_saved";
 	id?: string;
 	label?: string;
 };
+
+export type CaptureSideEffect = {
+	name: "index_upsert" | "index_remove" | "history" | "organize_refresh" | "fanout_queue";
+	status: "ok" | "failed" | "skipped";
+	detail?: string;
+};
+
+export type FanOutQueueStatus = "queued" | "skipped-no-targets" | "queue_failed";
 
 export type RouteExecutionOutcome = {
 	kind: RouteExecutionKind;
@@ -35,6 +50,12 @@ export type RouteExecutionOutcome = {
 		timeoutMs?: number;
 	};
 	secondaryEffects?: RouteExecutionSecondaryEffect[];
+	result?: "success" | "partial_success";
+	sideEffects?: CaptureSideEffect[];
+	fanOut?: {
+		status: FanOutQueueStatus;
+		targetNoteIds: string[];
+	};
 };
 
 export type CaptureErrorCode =

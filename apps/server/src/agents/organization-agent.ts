@@ -10,6 +10,7 @@ import {
 
 interface OrganizeParams {
 	noteIds?: string[];
+	dedupeKey?: string;
 }
 
 interface FanOutParams {
@@ -60,6 +61,7 @@ const WORKFLOW_START_RETRY = {
 	baseDelayMs: 200,
 	maxDelayMs: 2500,
 } as const;
+const ORGANIZE_DEDUPE_WINDOW_MS = 2500;
 
 interface CollectionRow {
 	id: string;
@@ -94,6 +96,7 @@ interface CollectionLifecyclePayload {
 	status?: CollectionStatus;
 	title?: string;
 	noteIds?: string[];
+	dedupeKey?: string;
 	targetNoteIds?: string[];
 	input?: string;
 	factA?: {
@@ -125,6 +128,14 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 		lastRunAt: null,
 		updatedAt: Date.now(),
 	};
+
+	private readonly recentOrganizeTriggers = new Map<
+		string,
+		{
+			workflowId: string | null;
+			at: number;
+		}
+	>();
 
 	async onStart() {
 		const hasHeartbeatSchedule = this.getSchedules({ type: "cron" }).some(
@@ -200,6 +211,23 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 
 	private normalizeNoteIds(noteIds: string[] = []): string[] {
 		return Array.from(new Set(noteIds.map((noteId) => noteId.trim()).filter(Boolean)));
+	}
+
+	private buildOrganizeDedupeKey(noteIds: string[], explicitKey?: string): string {
+		const trimmed = explicitKey?.trim();
+		if (trimmed) {
+			return `explicit:${trimmed}`;
+		}
+
+		return `notes:${[...noteIds].sort().join(",")}`;
+	}
+
+	private pruneRecentOrganizeTriggers(now: number): void {
+		for (const [key, entry] of this.recentOrganizeTriggers.entries()) {
+			if (now - entry.at > ORGANIZE_DEDUPE_WINDOW_MS) {
+				this.recentOrganizeTriggers.delete(key);
+			}
+		}
 	}
 
 	private async fetchCollectionsFromDb(): Promise<CollectionListItem[]> {
@@ -363,8 +391,24 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 			return null;
 		}
 
+		const dedupeKey = this.buildOrganizeDedupeKey(noteIds, params.dedupeKey);
+		const now = Date.now();
+		this.pruneRecentOrganizeTriggers(now);
+		const recent = this.recentOrganizeTriggers.get(dedupeKey);
+		if (recent && now - recent.at <= ORGANIZE_DEDUPE_WINDOW_MS) {
+			console.info("organization.run_organize.deduped", {
+				agentName: ORGANIZATION_AGENT_NAME,
+				noteId: noteIds[0] ?? null,
+				noteCount: noteIds.length,
+				dedupeKey,
+				windowMs: ORGANIZE_DEDUPE_WINDOW_MS,
+				workflowId: recent.workflowId,
+			});
+			return recent.workflowId;
+		}
+
 		try {
-			return await this.retry(
+			const workflowId = await this.retry(
 				async () =>
 					this.runWorkflow("ORGANIZE_WORKFLOW", {
 						userId: this.name,
@@ -382,6 +426,11 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 						}),
 				},
 			);
+			this.recentOrganizeTriggers.set(dedupeKey, {
+				workflowId,
+				at: Date.now(),
+			});
+			return workflowId;
 		} catch (error) {
 			this.logRetryExhausted({
 				routeKind: "run_organize",
@@ -634,6 +683,7 @@ export class OrganizationAgent extends Agent<Env, OrganizationAgentState> {
 		if (payload.action === "run_organize") {
 			const workflow = await this.runOrganizeWorkflow({
 				noteIds: payload.noteIds ?? [],
+				dedupeKey: payload.dedupeKey,
 			});
 			return Response.json({ ok: true, workflow });
 		}
