@@ -1,4 +1,4 @@
-import { TooltipProvider } from "@cloudflare/kumo";
+import { Button, Dialog, TooltipProvider } from "@cloudflare/kumo";
 import type { RouteExecutionOutcome } from "@gneissdotrun/api/capture-contract";
 import { env } from "@gneissdotrun/env/web";
 import { useNavigate } from "@tanstack/react-router";
@@ -39,7 +39,25 @@ interface RewriteProgressUpdate {
 	text: string;
 }
 
+type NoteProcessingState = "queued" | "streaming" | "persisting";
+
 type CaptureStreamEvent =
+	| {
+			type: "capture_started";
+			noteId?: string;
+	  }
+	| {
+			type: "rewrite_started";
+			noteId?: string;
+	  }
+	| {
+			type: "rewrite_done";
+			noteId?: string;
+	  }
+	| {
+			type: "persisted";
+			noteIds: string[];
+	  }
 	| {
 			type: "rewrite_progress";
 			update: RewriteProgressUpdate;
@@ -119,6 +137,9 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 	const [isApiLoading, setIsApiLoading] = useState(false);
 	const [apiError, setApiError] = useState<string | null>(null);
 	const [isCapturing, setIsCapturing] = useState(false);
+	const [noteProcessingStates, setNoteProcessingStates] = useState<
+		Record<string, NoteProcessingState>
+	>({});
 	const [ephemeralContent, setEphemeralContent] = useState<string | null>(null);
 	const [themeMode, setThemeMode] = useState<ThemeMode>("light");
 	const [fontMode, setFontMode] = useState<FontMode>("mono");
@@ -133,6 +154,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		command: string;
 		nonce: number;
 	} | null>(null);
+	const [isInfoDialogOpen, setIsInfoDialogOpen] = useState(false);
 
 	const clearEphemeral = useCallback(() => {
 		if (ephemeralTimerRef.current) {
@@ -154,6 +176,24 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		},
 		[clearEphemeral],
 	);
+
+	const setNoteProcessingState = useCallback((noteId: string, state: NoteProcessingState) => {
+		setNoteProcessingStates((current) => ({
+			...current,
+			[noteId]: state,
+		}));
+	}, []);
+
+	const clearNoteProcessingState = useCallback((noteId: string) => {
+		setNoteProcessingStates((current) => {
+			if (!current[noteId]) {
+				return current;
+			}
+			const next = { ...current };
+			delete next[noteId];
+			return next;
+		});
+	}, []);
 
 	const fetchApiNotes = useCallback(async () => {
 		setIsApiLoading(true);
@@ -410,6 +450,21 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 			},
 		) => {
 			setIsCapturing(true);
+			const touchedNoteIds = new Set<string>();
+			const markProcessingState = (noteId: string | undefined, state: NoteProcessingState) => {
+				if (!noteId) {
+					return;
+				}
+				touchedNoteIds.add(noteId);
+				setNoteProcessingState(noteId, state);
+			};
+			const clearTouchedStates = () => {
+				for (const noteId of touchedNoteIds) {
+					clearNoteProcessingState(noteId);
+				}
+			};
+
+			markProcessingState(input.noteId, "queued");
 
 			try {
 				let outcome: RouteExecutionOutcome | null = null;
@@ -448,6 +503,28 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 
 					const processLine = (line: string) => {
 						const event = JSON.parse(line) as CaptureStreamEvent;
+						if (event.type === "capture_started") {
+							markProcessingState(event.noteId ?? input.noteId, "queued");
+							return;
+						}
+
+						if (event.type === "rewrite_started") {
+							markProcessingState(event.noteId ?? input.noteId, "streaming");
+							return;
+						}
+
+						if (event.type === "rewrite_done") {
+							markProcessingState(event.noteId ?? input.noteId, "persisting");
+							return;
+						}
+
+						if (event.type === "persisted") {
+							for (const noteId of event.noteIds ?? []) {
+								markProcessingState(noteId, "persisting");
+							}
+							return;
+						}
+
 						if (event.type === "rewrite_progress") {
 							options.onRewriteProgress?.(event.update);
 							return;
@@ -531,6 +608,14 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 					}
 				}
 
+				const failedSideEffects = (outcome.sideEffects ?? []).filter(
+					(effect) => effect.status === "failed",
+				);
+				if (failedSideEffects.length > 0) {
+					const sideEffectLabels = failedSideEffects.map((effect) => effect.name).join(", ");
+					toast.warning(`Saved, but some background steps failed (${sideEffectLabels}).`);
+				}
+
 				if (intent.showEphemeral && outcome.ephemeral?.content) {
 					scheduleEphemeral(outcome.ephemeral.content, outcome.ephemeral.timeoutMs ?? 8000);
 				} else if (intent.resetCanvas) {
@@ -543,8 +628,16 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 					onSelectNoteId(null);
 				}
 
+				for (const noteId of [input.noteId, outcome.noteId, ...(outcome.noteIds ?? [])]) {
+					if (noteId) {
+						clearNoteProcessingState(noteId);
+					}
+				}
+				clearTouchedStates();
+
 				await fetchApiNotes();
 			} catch (error) {
+				clearTouchedStates();
 				toast.error(error instanceof Error ? error.message : "Capture failed");
 				if (options?.onRewriteProgress) {
 					throw error;
@@ -553,7 +646,14 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 				setIsCapturing(false);
 			}
 		},
-		[clearEphemeral, fetchApiNotes, onSelectNoteId, scheduleEphemeral],
+		[
+			clearEphemeral,
+			clearNoteProcessingState,
+			fetchApiNotes,
+			onSelectNoteId,
+			scheduleEphemeral,
+			setNoteProcessingState,
+		],
 	);
 
 	const handleSaveNoteContent = useCallback(
@@ -1014,6 +1114,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 							isLoading={usingFallback && isApiLoading}
 							error={usingFallback ? apiError : null}
 							usingFallback={usingFallback}
+							processingStatesByNoteId={noteProcessingStates}
 						/>
 					}
 					main={
@@ -1024,11 +1125,13 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 							onArchiveNote={handleArchiveNote}
 							onCreateNote={createNewNote}
 							isCapturing={isCapturing}
+							runStateByNoteId={noteProcessingStates}
 							ephemeralContent={ephemeralContent}
 							onCanvasInput={handleCanvasInput}
 							markdownMode={markdownMode}
 							editorFocusToken={editorFocusToken}
 							externalRunRequest={externalRunRequest}
+							rightSidebarCollapsed={rightCollapsed}
 						/>
 					}
 					rightRail={
@@ -1069,7 +1172,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 								toast.warning("Settings is coming soon.");
 							}}
 							onOpenInfo={() => {
-								toast.success("Gneiss captures first and organizes with agents in the background.");
+								setIsInfoDialogOpen(true);
 							}}
 						/>
 					}
@@ -1080,6 +1183,30 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 					void handlePaletteAction(action);
 				}}
 			/>
+			<Dialog.Root
+				open={isInfoDialogOpen}
+				onOpenChange={(open) => {
+					setIsInfoDialogOpen(open);
+				}}
+			>
+				<Dialog size="sm" className="space-y-4 p-6">
+					<Dialog.Title className="text-kumo-default text-base font-semibold">
+						About Gneiss
+					</Dialog.Title>
+					<Dialog.Description className="text-kumo-subtle text-sm leading-6">
+						Gneiss captures first and organizes with agents in the background.
+					</Dialog.Description>
+					<div className="flex justify-end">
+						<Dialog.Close
+							render={(props) => (
+								<Button {...props} size="sm" variant="secondary">
+									Close
+								</Button>
+							)}
+						/>
+					</div>
+				</Dialog>
+			</Dialog.Root>
 		</>
 	);
 }

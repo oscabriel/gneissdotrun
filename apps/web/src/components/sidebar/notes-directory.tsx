@@ -21,6 +21,8 @@ interface WorkspaceNode {
 	updatedAt?: number;
 }
 
+type NoteProcessingState = "queued" | "streaming" | "persisting";
+
 interface NotesDirectoryProps {
 	notes: SidebarNote[];
 	selectedNoteId: string | null;
@@ -28,6 +30,7 @@ interface NotesDirectoryProps {
 	isLoading: boolean;
 	error: string | null;
 	usingFallback: boolean;
+	processingStatesByNoteId?: Record<string, NoteProcessingState>;
 }
 
 export interface NotesDirectoryHandle {
@@ -42,6 +45,7 @@ interface RenderRow {
 	noteId?: string;
 	updatedAt?: number;
 	childCount?: number;
+	processingStatus?: NoteProcessingState;
 }
 
 function monthBucketLabel(updatedAt: number): string {
@@ -82,7 +86,15 @@ function buildDirectoryTree(notes: SidebarNote[]): WorkspaceNode[] {
 
 export const NotesDirectory = forwardRef<NotesDirectoryHandle, NotesDirectoryProps>(
 	function NotesDirectory(
-		{ notes, selectedNoteId, onSelectNote, isLoading, error, usingFallback },
+		{
+			notes,
+			selectedNoteId,
+			onSelectNote,
+			isLoading,
+			error,
+			usingFallback,
+			processingStatesByNoteId = {},
+		},
 		ref,
 	) {
 		const [query, setQuery] = useState("");
@@ -158,13 +170,14 @@ export const NotesDirectory = forwardRef<NotesDirectoryHandle, NotesDirectoryPro
 							name: child.name,
 							noteId: child.noteId,
 							updatedAt: child.updatedAt,
+							processingStatus: child.noteId ? processingStatesByNoteId[child.noteId] : undefined,
 						});
 					}
 				}
 			}
 
 			return output;
-		}, [expandedFolders, folders, query, treeNodes]);
+		}, [expandedFolders, folders, processingStatesByNoteId, query, treeNodes]);
 
 		useEffect(() => {
 			if (rows.length === 0) {
@@ -333,9 +346,15 @@ export const NotesDirectory = forwardRef<NotesDirectoryHandle, NotesDirectoryPro
 									key={row.id}
 									name={row.name}
 									subtitle={
-										row.updatedAt
-											? `Updated ${new Date(row.updatedAt).toLocaleDateString()}`
-											: undefined
+										row.processingStatus
+											? row.processingStatus === "streaming"
+												? "Streaming…"
+												: row.processingStatus === "persisting"
+													? "Saving…"
+													: "Running…"
+											: row.updatedAt
+												? `Updated ${new Date(row.updatedAt).toLocaleDateString()}`
+												: undefined
 									}
 									selected={selected}
 									active={isActive}

@@ -44,6 +44,7 @@
 	--text-color-kumo-subtle: #78716c;
 	--text-color-kumo-link: #44403c;
 	--text-color-kumo-inverse: #fafaf9;
+	--workspace-toast-right-offset: 1rem;
 }
 
 [data-mode="dark"] {
@@ -62,6 +63,12 @@
 	--text-color-kumo-subtle: #a8a29e;
 	--text-color-kumo-link: #d6d3d1;
 	--text-color-kumo-inverse: #0c0a09;
+}
+
+@media (min-width: 640px) {
+	:root {
+		--workspace-toast-right-offset: 2rem;
+	}
 }
 
 @layer base {
@@ -88,6 +95,13 @@
 		@apply bg-kumo-base;
 	}
 
+	div[aria-label="Notifications"][aria-live="polite"][aria-relevant="additions text"] {
+		right: var(--workspace-toast-right-offset);
+		left: auto;
+		margin-inline: 0;
+		max-width: min(340px, calc(100vw - var(--workspace-toast-right-offset) - 1rem));
+	}
+
 	.workspace-divider-v {
 		@apply border-kumo-line;
 	}
@@ -105,8 +119,16 @@
 			margin-left: 48px;
 		}
 
+		body:has(aside[data-right-sidebar-open="true"]) {
+			--workspace-toast-right-offset: calc(192px + 1rem); /* w-48 + gap */
+		}
+
 		body:has(aside[data-right-sidebar-open="true"]) .workspace-main {
 			margin-right: 192px; /* w-48 */
+		}
+
+		body:has(aside[data-right-sidebar-open="false"]) {
+			--workspace-toast-right-offset: calc(48px + 1rem); /* w-12 + gap */
 		}
 
 		body:has(aside[data-right-sidebar-open="false"]) .workspace-main {
@@ -166,6 +188,75 @@
 		@apply my-4 border-kumo-line text-kumo-strong border-l-2 pl-4;
 	}
 
+	.ProseMirror hr {
+		@apply my-6 cursor-text border-0;
+		position: relative;
+		height: 1rem;
+		pointer-events: auto;
+	}
+
+	.ProseMirror hr::before {
+		content: "";
+		position: absolute;
+		top: 50%;
+		right: 0;
+		left: 0;
+		border-top: 1px solid var(--color-kumo-line);
+		transform: translateY(-50%);
+		pointer-events: none;
+	}
+
+	.ProseMirror hr.ProseMirror-selectednode::before {
+		border-top-color: var(--color-kumo-brand);
+		border-top-width: 2px;
+	}
+
+	.ProseMirror hr.pm-rollover-horizontal-rule {
+		position: relative;
+		height: auto;
+		min-height: 1.75rem;
+	}
+
+	.ProseMirror hr.pm-rollover-horizontal-rule::before {
+		content: attr(data-horizontal-rule-delimiter);
+		display: inline-block;
+		position: static;
+		border-top: 0;
+		transform: none;
+		padding-right: 0.125rem;
+		font-family: var(--font-mono);
+		line-height: 1.75rem;
+		color: var(--text-color-kumo-subtle);
+	}
+
+	.ProseMirror hr.pm-rollover-horizontal-rule::after {
+		content: "";
+		position: absolute;
+		top: 50%;
+		width: 1px;
+		height: 1.1rem;
+		background: var(--text-color-kumo-default);
+		transform: translateY(-50%);
+		animation: pm-caret-blink 1s steps(2, start) infinite;
+	}
+
+	.ProseMirror hr.pm-rollover-horizontal-rule[data-horizontal-rule-cursor="start"]::after {
+		left: 0;
+	}
+
+	.ProseMirror hr.pm-rollover-horizontal-rule[data-horizontal-rule-cursor="end"]::after,
+	.ProseMirror hr.pm-rollover-horizontal-rule[data-horizontal-rule-cursor="node"]::after {
+		left: calc(3ch + 0.125rem);
+	}
+
+	.ProseMirror hr.pm-rollover-horizontal-rule.ProseMirror-selectednode::before {
+		color: var(--color-kumo-brand);
+	}
+
+	.ProseMirror hr.pm-rollover-horizontal-rule.ProseMirror-selectednode::after {
+		background: var(--color-kumo-brand);
+	}
+
 	.ProseMirror a {
 		@apply text-kumo-link underline underline-offset-2;
 	}
@@ -199,12 +290,27 @@
 		@apply rounded-none border-0 bg-transparent p-0;
 	}
 
+	.prose hr {
+		@apply my-6 border-kumo-line;
+	}
+
 	.shiki-token {
 		color: var(--shiki-light);
 	}
 
 	[data-mode="dark"] .shiki-token {
 		color: var(--shiki-dark);
+	}
+
+	@keyframes pm-caret-blink {
+		0%,
+		49% {
+			opacity: 1;
+		}
+		50%,
+		100% {
+			opacity: 0;
+		}
 	}
 
 	.pm-rollover-code-fenced-block::before,
@@ -226,5 +332,10 @@
 	.pm-rollover-code-fenced-block::after {
 		content: attr(data-fence-close);
 		margin-top: 0.25rem;
+	}
+
+	.ProseMirror p.pm-rollover-code-source-block {
+		@apply my-4 overflow-x-auto rounded-lg border border-kumo-line bg-kumo-tint p-4 font-mono text-[13px] leading-6;
+		white-space: pre;
 	}
 }

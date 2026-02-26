@@ -4,6 +4,8 @@ import type { SidebarNote } from "@/components/sidebar/notes-sidebar";
 
 import { NoteEditor } from "@/components/note-editor";
 
+type NoteRunState = "idle" | "queued" | "streaming" | "persisting";
+
 interface CanvasPaneProps {
 	selectedNote: SidebarNote | null;
 	onCapture: (
@@ -24,6 +26,8 @@ interface CanvasPaneProps {
 	markdownMode: "edit" | "preview";
 	editorFocusToken: number;
 	externalRunRequest?: { command: string; nonce: number } | null;
+	rightSidebarCollapsed: boolean;
+	runStateByNoteId?: Record<string, NoteRunState>;
 }
 
 export function CanvasPane({
@@ -38,6 +42,8 @@ export function CanvasPane({
 	markdownMode,
 	editorFocusToken,
 	externalRunRequest,
+	rightSidebarCollapsed,
+	runStateByNoteId = {},
 }: CanvasPaneProps) {
 	if (!selectedNote) {
 		return (
@@ -69,9 +75,11 @@ export function CanvasPane({
 					onArchiveNote={onArchiveNote}
 					onEditorInput={onCanvasInput}
 					isCapturing={isCapturing}
+					runStatus={runStateByNoteId[selectedNote.id] ?? "idle"}
 					externalRunRequest={externalRunRequest}
 					markdownMode={markdownMode}
 					focusToken={editorFocusToken}
+					rightSidebarCollapsed={rightSidebarCollapsed}
 				/>
 			</div>
 		</div>

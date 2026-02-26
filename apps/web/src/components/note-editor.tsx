@@ -1,5 +1,5 @@
 import { Button, DropdownMenu } from "@cloudflare/kumo";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
@@ -28,9 +28,11 @@ interface NoteEditorProps {
 	onArchiveNote: (noteId: string) => Promise<void>;
 	onEditorInput: () => void;
 	isCapturing: boolean;
+	runStatus?: "idle" | "queued" | "streaming" | "persisting";
 	externalRunRequest?: { command: string; nonce: number } | null;
 	markdownMode?: "edit" | "preview";
 	focusToken?: number;
+	rightSidebarCollapsed?: boolean;
 }
 
 type SlashInstructionKind = "none" | "editor" | "agent" | "freeform";
@@ -164,10 +166,13 @@ export function NoteEditor({
 	onSaveNoteContent,
 	onArchiveNote,
 	onEditorInput,
-	isCapturing,
+	// retained for compatibility with parent capture-level controls
+	isCapturing: _isCapturing,
+	runStatus = "idle",
 	externalRunRequest,
 	markdownMode = "edit",
 	focusToken,
+	rightSidebarCollapsed = false,
 }: NoteEditorProps) {
 	const sanitizedInitialContent = normalizeDraftContent(initialContent);
 	const normalizedInitialTitle = normalizeDraftTitle(title);
@@ -416,13 +421,30 @@ export function NoteEditor({
 		});
 	};
 
+	const noteOptionsCollisionPadding = useMemo(() => {
+		if (
+			typeof window !== "undefined" &&
+			typeof window.matchMedia === "function" &&
+			window.matchMedia("(max-width: 1023px)").matches
+		) {
+			return 8;
+		}
+
+		return {
+			top: 8,
+			bottom: 8,
+			left: 8,
+			right: rightSidebarCollapsed ? 64 : 208,
+		};
+	}, [rightSidebarCollapsed]);
+
 	return (
 		<div className="relative">
 			<div className="absolute top-0 right-0 z-10 flex items-center gap-1">
 				<Button
 					size="sm"
 					variant="outline"
-					disabled={isCapturing}
+					disabled={runStatus !== "idle"}
 					onClick={() => {
 						onEditorInput();
 						void runCommandIntent("explicit");
@@ -439,13 +461,13 @@ export function NoteEditor({
 								shape="square"
 								className="text-2xl leading-none"
 								aria-label="Note options"
-								disabled={isCapturing}
+								disabled={runStatus !== "idle"}
 							/>
 						}
 					>
 						⋯
 					</DropdownMenu.Trigger>
-					<DropdownMenu.Content>
+					<DropdownMenu.Content align="end" collisionPadding={noteOptionsCollisionPadding}>
 						<DropdownMenu.Group>
 							<DropdownMenu.Label>Note options</DropdownMenu.Label>
 							<DropdownMenu.Separator />
@@ -467,6 +489,19 @@ export function NoteEditor({
 						</DropdownMenu.Group>
 					</DropdownMenu.Content>
 				</DropdownMenu>
+				{runStatus !== "idle" ? (
+					<span
+						className="text-kumo-subtle inline-flex items-center gap-1 text-xs"
+						aria-live="polite"
+					>
+						<span className="bg-kumo-subtle inline-block h-1.5 w-1.5 animate-pulse rounded-full" />
+						{runStatus === "queued"
+							? "Running…"
+							: runStatus === "streaming"
+								? "Streaming…"
+								: "Saving…"}
+					</span>
+				) : null}
 			</div>
 
 			{markdownMode === "edit" ? (
