@@ -84,6 +84,38 @@ describe("delimiter rollover markdown projection", () => {
 		editor.destroy();
 	});
 
+	it("does not project inline code delimiters as markdown widgets", () => {
+		const element = document.createElement("div");
+		const editor = new Editor({
+			element,
+			extensions: createEditorPmExtensions(),
+			content: {
+				type: "doc",
+				content: [
+					{
+						type: "paragraph",
+						content: [
+							{ type: "text", text: "A " },
+							{
+								type: "text",
+								text: "code",
+								marks: [{ type: "code" }],
+							},
+						],
+					},
+				],
+			},
+		});
+
+		editor.commands.setTextSelection(2);
+
+		const decorations = getRolloverDecorations(editor);
+		const codeDelimiters = decorations.filter((decoration) => decoration.spec.symbol === "`");
+		expect(codeDelimiters).toHaveLength(0);
+
+		editor.destroy();
+	});
+
 	it("does not render delimiter widgets at the cursor when inside marked text", () => {
 		const element = document.createElement("div");
 		const editor = new Editor({
@@ -150,6 +182,103 @@ describe("delimiter rollover markdown projection", () => {
 
 		expect(headingPrefix?.from).toBe(1);
 		expect(headingPrefix?.spec.symbol).toBe("### ");
+
+		editor.destroy();
+	});
+
+	it("renders code fence delimiters when cursor is inside a code block", () => {
+		const element = document.createElement("div");
+		const editor = new Editor({
+			element,
+			extensions: createEditorPmExtensions({ includeShikiHighlight: false }),
+			content: {
+				type: "doc",
+				content: [
+					{
+						type: "codeBlock",
+						attrs: { language: "javascript" },
+						content: [{ type: "text", text: "const x = 1;" }],
+					},
+				],
+			},
+		});
+
+		editor.commands.setTextSelection(2);
+
+		const decorations = getRolloverDecorations(editor);
+		const fencedBlock = decorations.find(
+			(decoration) => decoration.spec.markerRole === "fence-block",
+		);
+
+		expect(fencedBlock?.from).toBe(0);
+		expect(fencedBlock?.to).toBe(14);
+		expect(fencedBlock?.spec.openSymbol).toBe("```javascript");
+		expect(fencedBlock?.spec.closeSymbol).toBe("```");
+
+		editor.destroy();
+	});
+
+	it("renders code fence delimiters without language label when no language set", () => {
+		const element = document.createElement("div");
+		const editor = new Editor({
+			element,
+			extensions: createEditorPmExtensions({ includeShikiHighlight: false }),
+			content: {
+				type: "doc",
+				content: [
+					{
+						type: "codeBlock",
+						content: [{ type: "text", text: "hello" }],
+					},
+				],
+			},
+		});
+
+		editor.commands.setTextSelection(2);
+
+		const decorations = getRolloverDecorations(editor);
+		const fencedBlock = decorations.find(
+			(decoration) => decoration.spec.markerRole === "fence-block",
+		);
+
+		expect(fencedBlock?.spec.openSymbol).toBe("```");
+
+		editor.destroy();
+	});
+
+	it("keeps empty code blocks editable while fence decorators are active", () => {
+		const element = document.createElement("div");
+		const editor = new Editor({
+			element,
+			extensions: createEditorPmExtensions({ includeShikiHighlight: false }),
+			content: {
+				type: "doc",
+				content: [
+					{
+						type: "codeBlock",
+						attrs: { language: "typescript" },
+						content: [],
+					},
+				],
+			},
+		});
+
+		editor.commands.setTextSelection(1);
+		editor.commands.insertContent("x");
+
+		expect(editor.getJSON()).toEqual({
+			type: "doc",
+			content: [
+				{
+					type: "codeBlock",
+					attrs: { language: "typescript" },
+					content: [{ type: "text", text: "x" }],
+				},
+				{
+					type: "paragraph",
+				},
+			],
+		});
 
 		editor.destroy();
 	});

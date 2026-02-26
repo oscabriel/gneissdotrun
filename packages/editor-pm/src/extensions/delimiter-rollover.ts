@@ -4,7 +4,7 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { EditorState } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
-type RolloverMarkName = "bold" | "italic" | "strike" | "code";
+type RolloverMarkName = "bold" | "italic" | "strike";
 
 type RolloverBoundary = {
 	markName: RolloverMarkName;
@@ -42,10 +42,9 @@ const ROLLOVER_DELIMITERS: Record<RolloverMarkName, string> = {
 	bold: "**",
 	italic: "*",
 	strike: "~~",
-	code: "`",
 };
 
-const MARK_ORDER: RolloverMarkName[] = ["code", "bold", "italic", "strike"];
+const MARK_ORDER: RolloverMarkName[] = ["bold", "italic", "strike"];
 
 export const markdownDelimiterRolloverPluginKey = new PluginKey<RolloverPluginState>(
 	"markdown-delimiter-rollover",
@@ -168,7 +167,9 @@ function delimiterSideAtBoundary(
 	return kind === "open" ? -1 : 1;
 }
 
-function createMarkerWidget(symbol: string, markerRole: "open" | "close" | "heading-prefix") {
+type MarkerRole = "open" | "close" | "heading-prefix";
+
+function createMarkerWidget(symbol: string, markerRole: MarkerRole) {
 	const widget = document.createElement("span");
 	widget.className = "pm-rollover-delimiter";
 	if (markerRole === "heading-prefix") {
@@ -201,6 +202,30 @@ function buildDecorations(state: EditorState, boundary: RolloverBoundary): Decor
 				markerRole: "heading-prefix",
 				symbol: prefix,
 			}),
+		);
+	}
+
+	if (activeBlock.node.type.name === "codeBlock") {
+		const lang = activeBlock.node.attrs.language as string | null;
+		const openFence = lang ? `\`\`\`${lang}` : "```";
+		const closeFence = "```";
+		const nodeStart = activeBlock.start - 1;
+		const nodeEnd = activeBlock.start + activeBlock.node.content.size + 1;
+		decorations.push(
+			Decoration.node(
+				nodeStart,
+				nodeEnd,
+				{
+					class: "pm-rollover-code-fenced-block",
+					"data-fence-open": openFence,
+					"data-fence-close": closeFence,
+				},
+				{
+					markerRole: "fence-block",
+					openSymbol: openFence,
+					closeSymbol: closeFence,
+				},
+			),
 		);
 	}
 

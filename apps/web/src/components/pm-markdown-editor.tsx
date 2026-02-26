@@ -3,6 +3,9 @@ import {
 	markdownToPmDoc,
 	pmDocToMarkdown,
 } from "@gneissdotrun/editor-pm";
+import type { NodeType } from "@tiptap/pm/model";
+import { liftListItem, sinkListItem } from "@tiptap/pm/schema-list";
+import type { EditorView } from "@tiptap/pm/view";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { useEffect, useMemo, useRef, type KeyboardEventHandler } from "react";
 
@@ -22,6 +25,68 @@ interface PmMarkdownEditorProps {
 }
 
 const PARSE_WARN_THRESHOLD_MS = 12;
+
+function getListItemTypes(view: EditorView): NodeType[] {
+	const listItem = view.state.schema.nodes.listItem;
+	const taskItem = view.state.schema.nodes.taskItem;
+	return [listItem, taskItem].filter((nodeType): nodeType is NodeType => Boolean(nodeType));
+}
+
+function tryListIndent(view: EditorView, outdent: boolean): boolean {
+	for (const itemType of getListItemTypes(view)) {
+		const command = outdent ? liftListItem(itemType) : sinkListItem(itemType);
+		if (command(view.state, view.dispatch)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+export function tryInlineCodeInputRuleFallback(
+	view: EditorView,
+	from: number,
+	to: number,
+	text: string,
+): boolean {
+	if (text !== "`" || from !== to) {
+		return false;
+	}
+
+	const { state } = view;
+	const codeMark = state.schema.marks.code;
+	if (!codeMark) {
+		return false;
+	}
+
+	const $from = state.doc.resolve(from);
+	if (!$from.parent.isTextblock || $from.parent.type.name === "codeBlock") {
+		return false;
+	}
+
+	const before = $from.parent.textBetween(0, $from.parentOffset, "\n", "\0");
+	const match = before.match(/(^|[^`])`([^`\n]+)$/);
+	if (!match) {
+		return false;
+	}
+
+	const matchText = match[0];
+	const codeText = match[2] ?? "";
+	if (!codeText) {
+		return false;
+	}
+
+	const suffixStartOffset = before.length - matchText.length;
+	const openingOffset = suffixStartOffset + (matchText.startsWith("`") ? 0 : 1);
+	const openingPos = $from.start() + openingOffset;
+	if (openingOffset > 0 && before[openingOffset - 1] === "\\") {
+		return false;
+	}
+
+	const tr = state.tr.replaceWith(openingPos, from, state.schema.text(codeText, [codeMark.create()]));
+	tr.removeStoredMark(codeMark);
+	view.dispatch(tr);
+	return true;
+}
 
 export function PmMarkdownEditor({
 	label,
@@ -43,13 +108,16 @@ export function PmMarkdownEditor({
 		editorProps: {
 			attributes: {
 				class: cn(
-					"prose prose-neutral min-h-40 max-w-none outline-none",
+					"min-h-40 max-w-none outline-none",
 					"[&_.pm-rollover-delimiter]:text-kumo-subtle [&_.pm-rollover-delimiter]:opacity-75",
 					"[&_.pm-fake-selection]:bg-kumo-tint/60",
 				),
 				"aria-label": label,
 			},
-			handleKeyDown: (_view, event) => {
+			handleTextInput: (view, from, to, text) => {
+				return tryInlineCodeInputRuleFallback(view, from, to, text);
+			},
+			handleKeyDown: (view, event) => {
 				if (event.isComposing) {
 					return false;
 				}
@@ -57,6 +125,22 @@ export function PmMarkdownEditor({
 				if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
 					event.preventDefault();
 					onRunShortcut?.();
+					return true;
+				}
+
+				if (event.key === "Tab") {
+					event.preventDefault();
+
+					if (tryListIndent(view, event.shiftKey)) {
+						return true;
+					}
+
+					if (event.shiftKey) {
+						return true;
+					}
+
+					const { from, to } = view.state.selection;
+					view.dispatch(view.state.tr.insertText("\t", from, to));
 					return true;
 				}
 
