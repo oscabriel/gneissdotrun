@@ -1,264 +1,31 @@
 import { Extension } from "@tiptap/core";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
-import type { EditorState } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { NodeSelection, Plugin } from "@tiptap/pm/state";
+import { DecorationSet } from "@tiptap/pm/view";
 
-type RolloverMarkName = "bold" | "italic" | "strike";
+import {
+	buildDecorations,
+	detectBoundary,
+	getBoundaryMarkRange,
+} from "./delimiter-rollover-decorations";
+import {
+	convertHorizontalRuleToMarkdownText,
+	resolveHorizontalRuleEditTarget,
+	upgradeMarkdownParagraphToHorizontalRule,
+} from "./delimiter-rollover-horizontal-rule";
+import { sourceSelectionInside } from "./delimiter-rollover-selection";
+import {
+	markdownDelimiterRolloverPluginKey,
+	type RolloverBoundary,
+	type RolloverPluginMeta,
+	type RolloverPluginState,
+} from "./delimiter-rollover-shared";
+import {
+	commitSourceBlockMode,
+	enterSourceBlockMode,
+	findSourceTarget,
+} from "./delimiter-rollover-source-mode";
 
-type RolloverBoundary = {
-	markName: RolloverMarkName;
-	pos: number;
-	side: "inside" | "outside";
-} | null;
-
-type RolloverPluginState = {
-	boundary: RolloverBoundary;
-	active: boolean;
-};
-
-type RolloverPluginMeta =
-	| {
-			kind: "set-boundary";
-			boundary: RolloverBoundary;
-	  }
-	| {
-			kind: "set-active";
-			active: boolean;
-	  };
-
-type MarkRange = {
-	markName: RolloverMarkName;
-	from: number;
-	to: number;
-};
-
-type ActiveTextBlock = {
-	node: ProseMirrorNode;
-	start: number;
-};
-
-const ROLLOVER_DELIMITERS: Record<RolloverMarkName, string> = {
-	bold: "**",
-	italic: "*",
-	strike: "~~",
-};
-
-const MARK_ORDER: RolloverMarkName[] = ["bold", "italic", "strike"];
-
-export const markdownDelimiterRolloverPluginKey = new PluginKey<RolloverPluginState>(
-	"markdown-delimiter-rollover",
-);
-
-function findActiveTextBlock(state: EditorState): ActiveTextBlock | null {
-	const $from = state.selection.$from;
-	for (let depth = $from.depth; depth > 0; depth -= 1) {
-		const node = $from.node(depth);
-		if (!node.isTextblock) {
-			continue;
-		}
-		return {
-			node,
-			start: $from.start(depth),
-		};
-	}
-	return null;
-}
-
-function collectMarkRanges(block: ActiveTextBlock): MarkRange[] {
-	const ranges: MarkRange[] = [];
-
-	for (const markName of MARK_ORDER) {
-		let rangeStart: number | null = null;
-
-		block.node.forEach((child, offset) => {
-			const from = block.start + offset;
-			const hasMark = child.isText && child.marks.some((mark) => mark.type.name === markName);
-			if (hasMark && rangeStart === null) {
-				rangeStart = from;
-				return;
-			}
-			if (!hasMark && rangeStart !== null) {
-				ranges.push({
-					markName,
-					from: rangeStart,
-					to: from,
-				});
-				rangeStart = null;
-			}
-		});
-
-		if (rangeStart !== null) {
-			ranges.push({
-				markName,
-				from: rangeStart,
-				to: block.start + block.node.content.size,
-			});
-		}
-	}
-
-	return ranges;
-}
-
-function getBoundaryMarkRange(
-	state: EditorState,
-	boundary: Exclude<RolloverBoundary, null>,
-): MarkRange | null {
-	const activeBlock = findActiveTextBlock(state);
-	if (!activeBlock) {
-		return null;
-	}
-	const ranges = collectMarkRanges(activeBlock);
-	return (
-		ranges.find(
-			(range) =>
-				range.markName === boundary.markName &&
-				(range.from === boundary.pos || range.to === boundary.pos),
-		) ?? null
-	);
-}
-
-function detectBoundary(state: EditorState): RolloverBoundary {
-	if (!state.selection.empty) {
-		return null;
-	}
-
-	const activeBlock = findActiveTextBlock(state);
-	if (!activeBlock) {
-		return null;
-	}
-
-	const cursor = state.selection.from;
-	const ranges = collectMarkRanges(activeBlock);
-
-	for (const markName of MARK_ORDER) {
-		const range = ranges.find(
-			(candidate) =>
-				candidate.markName === markName && (candidate.from === cursor || candidate.to === cursor),
-		);
-		if (!range) {
-			continue;
-		}
-		return {
-			markName,
-			pos: cursor,
-			side: range.from === cursor ? "inside" : "outside",
-		};
-	}
-
-	return null;
-}
-
-function delimiterSideAtBoundary(
-	boundary: RolloverBoundary,
-	range: MarkRange,
-	kind: "open" | "close",
-): number {
-	if (!boundary || boundary.markName !== range.markName) {
-		return kind === "open" ? -1 : 1;
-	}
-
-	if (kind === "open" && boundary.pos === range.from) {
-		return boundary.side === "inside" ? -1 : 1;
-	}
-
-	if (kind === "close" && boundary.pos === range.to) {
-		return boundary.side === "inside" ? 1 : -1;
-	}
-
-	return kind === "open" ? -1 : 1;
-}
-
-type MarkerRole = "open" | "close" | "heading-prefix";
-
-function createMarkerWidget(symbol: string, markerRole: MarkerRole) {
-	const widget = document.createElement("span");
-	widget.className = "pm-rollover-delimiter";
-	if (markerRole === "heading-prefix") {
-		widget.classList.add("pm-rollover-heading-prefix");
-	}
-	widget.dataset.markerRole = markerRole;
-	widget.textContent = symbol;
-	return widget;
-}
-
-function buildDecorations(state: EditorState, boundary: RolloverBoundary): DecorationSet {
-	if (!state.selection.empty) {
-		return DecorationSet.empty;
-	}
-
-	const activeBlock = findActiveTextBlock(state);
-	if (!activeBlock) {
-		return DecorationSet.empty;
-	}
-
-	const decorations: Decoration[] = [];
-
-	if (activeBlock.node.type.name === "heading") {
-		const level = Math.max(1, Math.min(6, Number(activeBlock.node.attrs.level ?? 1)));
-		const prefix = `${"#".repeat(level)} `;
-		decorations.push(
-			Decoration.widget(activeBlock.start, createMarkerWidget(prefix, "heading-prefix"), {
-				side: -1,
-				key: `heading-prefix-${activeBlock.start}`,
-				markerRole: "heading-prefix",
-				symbol: prefix,
-			}),
-		);
-	}
-
-	if (activeBlock.node.type.name === "codeBlock") {
-		const lang = activeBlock.node.attrs.language as string | null;
-		const openFence = lang ? `\`\`\`${lang}` : "```";
-		const closeFence = "```";
-		const nodeStart = activeBlock.start - 1;
-		const nodeEnd = activeBlock.start + activeBlock.node.content.size + 1;
-		decorations.push(
-			Decoration.node(
-				nodeStart,
-				nodeEnd,
-				{
-					class: "pm-rollover-code-fenced-block",
-					"data-fence-open": openFence,
-					"data-fence-close": closeFence,
-				},
-				{
-					markerRole: "fence-block",
-					openSymbol: openFence,
-					closeSymbol: closeFence,
-				},
-			),
-		);
-	}
-
-	for (const range of collectMarkRanges(activeBlock)) {
-		const delimiter = ROLLOVER_DELIMITERS[range.markName];
-		decorations.push(
-			Decoration.widget(range.from, createMarkerWidget(delimiter, "open"), {
-				side: delimiterSideAtBoundary(boundary, range, "open"),
-				key: `mark-open-${range.markName}-${range.from}-${range.to}`,
-				markName: range.markName,
-				markerRole: "open",
-				symbol: delimiter,
-			}),
-		);
-		decorations.push(
-			Decoration.widget(range.to, createMarkerWidget(delimiter, "close"), {
-				side: delimiterSideAtBoundary(boundary, range, "close"),
-				key: `mark-close-${range.markName}-${range.from}-${range.to}`,
-				markName: range.markName,
-				markerRole: "close",
-				symbol: delimiter,
-			}),
-		);
-	}
-
-	if (decorations.length === 0) {
-		return DecorationSet.empty;
-	}
-
-	return DecorationSet.create(state.doc, decorations);
-}
+export { markdownDelimiterRolloverPluginKey };
 
 export const DelimiterRolloverExtension = Extension.create({
 	name: "delimiterRollover",
@@ -269,6 +36,11 @@ export const DelimiterRolloverExtension = Extension.create({
 	},
 	addKeyboardShortcuts() {
 		return {
+			Enter: () => {
+				return upgradeMarkdownParagraphToHorizontalRule(this.editor.state, (tr) =>
+					this.editor.view.dispatch(tr),
+				);
+			},
 			ArrowLeft: () => {
 				const pluginState = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
 				const boundary = pluginState?.boundary ?? null;
@@ -304,6 +76,18 @@ export const DelimiterRolloverExtension = Extension.create({
 				return true;
 			},
 			Backspace: () => {
+				const horizontalRuleTarget = resolveHorizontalRuleEditTarget(
+					this.editor.state,
+					"Backspace",
+				);
+				if (horizontalRuleTarget) {
+					return convertHorizontalRuleToMarkdownText(
+						this.editor.state,
+						horizontalRuleTarget,
+						(tr) => this.editor.view.dispatch(tr),
+					);
+				}
+
 				const pluginState = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
 				const boundary = pluginState?.boundary ?? null;
 				if (!boundary) {
@@ -327,6 +111,15 @@ export const DelimiterRolloverExtension = Extension.create({
 				return true;
 			},
 			Delete: () => {
+				const horizontalRuleTarget = resolveHorizontalRuleEditTarget(this.editor.state, "Delete");
+				if (horizontalRuleTarget) {
+					return convertHorizontalRuleToMarkdownText(
+						this.editor.state,
+						horizontalRuleTarget,
+						(tr) => this.editor.view.dispatch(tr),
+					);
+				}
+
 				const pluginState = markdownDelimiterRolloverPluginKey.getState(this.editor.state);
 				const boundary = pluginState?.boundary ?? null;
 				if (!boundary) {
@@ -359,32 +152,69 @@ export const DelimiterRolloverExtension = Extension.create({
 					init: (_config, state) => ({
 						boundary: detectBoundary(state),
 						active: true,
+						sourceBlock: null,
 					}),
 					apply: (tr, value, _oldState, newState) => {
 						const fromMeta = tr.getMeta(markdownDelimiterRolloverPluginKey) as
 							| RolloverPluginMeta
 							| undefined;
+
+						let sourceBlock = value.sourceBlock;
+						if (sourceBlock && tr.docChanged) {
+							const mappedFrom = tr.mapping.map(sourceBlock.from, -1);
+							const mappedTo = tr.mapping.map(sourceBlock.to, -1);
+							if (mappedFrom < mappedTo) {
+								sourceBlock = {
+									...sourceBlock,
+									from: mappedFrom,
+									to: mappedTo,
+									listPos:
+										typeof sourceBlock.listPos === "number"
+											? tr.mapping.map(sourceBlock.listPos, -1)
+											: undefined,
+									itemPos:
+										typeof sourceBlock.itemPos === "number"
+											? tr.mapping.map(sourceBlock.itemPos, -1)
+											: undefined,
+									quotePos:
+										typeof sourceBlock.quotePos === "number"
+											? tr.mapping.map(sourceBlock.quotePos, -1)
+											: undefined,
+								};
+							} else {
+								sourceBlock = null;
+							}
+						}
+
+						if (fromMeta?.kind === "set-source-block") {
+							sourceBlock = fromMeta.sourceBlock;
+						}
+
 						if (fromMeta?.kind === "set-active") {
 							return {
 								active: fromMeta.active,
-								boundary: fromMeta.active ? detectBoundary(newState) : null,
+								boundary: fromMeta.active && !sourceBlock ? detectBoundary(newState) : null,
+								sourceBlock,
 							};
 						}
 						if (fromMeta?.kind === "set-boundary") {
 							return {
 								...value,
 								boundary: fromMeta.boundary,
+								sourceBlock,
 							};
 						}
 						if (!value.active) {
 							return {
 								...value,
 								boundary: null,
+								sourceBlock,
 							};
 						}
 						return {
 							...value,
-							boundary: detectBoundary(newState),
+							boundary: sourceBlock ? null : detectBoundary(newState),
+							sourceBlock,
 						};
 					},
 				},
@@ -414,8 +244,66 @@ export const DelimiterRolloverExtension = Extension.create({
 						if (!pluginState?.active) {
 							return DecorationSet.empty;
 						}
-						return buildDecorations(state, pluginState.boundary);
+						return buildDecorations(state, pluginState.boundary, pluginState.sourceBlock);
 					},
+				},
+				appendTransaction: (transactions, _oldState, newState) => {
+					if (transactions.length === 0) {
+						return null;
+					}
+
+					const pluginState = markdownDelimiterRolloverPluginKey.getState(newState);
+					if (!pluginState) {
+						return null;
+					}
+
+					const selectionChanged = transactions.some((tr) => {
+						if (tr.selectionSet && !tr.docChanged) {
+							return true;
+						}
+						const meta = tr.getMeta(markdownDelimiterRolloverPluginKey) as
+							| RolloverPluginMeta
+							| undefined;
+						return (
+							meta?.kind === "set-source-block" &&
+							meta.sourceBlock === null &&
+							meta.recheckSelection === true
+						);
+					});
+					const focusActivated = transactions.some((tr) => {
+						const meta = tr.getMeta(markdownDelimiterRolloverPluginKey) as
+							| RolloverPluginMeta
+							| undefined;
+						return meta?.kind === "set-active" && meta.active;
+					});
+					if (!pluginState.sourceBlock && !selectionChanged && !focusActivated) {
+						return null;
+					}
+
+					if (pluginState.sourceBlock) {
+						if (
+							pluginState.active &&
+							sourceSelectionInside(newState.selection, pluginState.sourceBlock)
+						) {
+							return null;
+						}
+						return commitSourceBlockMode(newState, pluginState.sourceBlock);
+					}
+
+					if (!pluginState.active) {
+						return null;
+					}
+
+					if (!newState.selection.empty && !(newState.selection instanceof NodeSelection)) {
+						return null;
+					}
+
+					const target = findSourceTarget(newState);
+					if (!target) {
+						return null;
+					}
+
+					return enterSourceBlockMode(newState, target);
 				},
 			}),
 		];

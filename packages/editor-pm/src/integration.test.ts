@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { Editor } from "@tiptap/core";
 import { Fragment, Slice } from "@tiptap/pm/model";
+import { NodeSelection } from "@tiptap/pm/state";
 
 import "./test-dom";
 import { createEditorPmExtensions } from "./extensions";
@@ -45,6 +46,45 @@ function pasteText(editor: Editor, text: string): void {
 	}
 }
 
+function pressKey(editor: Editor, key: string): boolean {
+	const event = new window.KeyboardEvent("keydown", {
+		key,
+		bubbles: true,
+		cancelable: true,
+	});
+
+	let handled = false;
+	editor.view.someProp("handleKeyDown", (handler) => {
+		if (handler(editor.view, event)) {
+			handled = true;
+			return true;
+		}
+		return false;
+	});
+
+	if (handled) {
+		return true;
+	}
+
+	const { from, to, empty } = editor.state.selection;
+	if (!empty) {
+		editor.view.dispatch(editor.state.tr.delete(from, to));
+		return true;
+	}
+
+	if (key === "Backspace" && from > 0) {
+		editor.view.dispatch(editor.state.tr.delete(from - 1, from));
+		return true;
+	}
+
+	if (key === "Delete" && from < editor.state.doc.content.size) {
+		editor.view.dispatch(editor.state.tr.delete(from, from + 1));
+		return true;
+	}
+
+	return false;
+}
+
 function createTestEditor(): Editor {
 	const host = document.createElement("div");
 	document.body.appendChild(host);
@@ -56,6 +96,23 @@ function createTestEditor(): Editor {
 			content: [{ type: "paragraph" }],
 		},
 	});
+}
+
+function findHorizontalRulePos(editor: Editor): number {
+	let horizontalRulePos: number | null = null;
+	editor.state.doc.descendants((node, pos) => {
+		if (node.type.name === "horizontalRule") {
+			horizontalRulePos = pos;
+			return false;
+		}
+		return true;
+	});
+
+	if (horizontalRulePos === null) {
+		throw new Error("horizontal rule node not found");
+	}
+
+	return horizontalRulePos;
 }
 
 describe("editor-pm integration", () => {
@@ -172,6 +229,74 @@ describe("editor-pm integration", () => {
 		const json = editor.getJSON();
 		expect(json.content?.[0]?.type).toBe("table");
 		expect(json.content?.[0]?.content?.[0]?.type).toBe("tableRow");
+
+		editor.destroy();
+		editor.options.element?.remove();
+	});
+
+	it("shows horizontal rule markdown delimiter when the rule is selected", () => {
+		const editor = createTestEditor();
+		editor.commands.setContent({
+			type: "doc",
+			content: [
+				{ type: "paragraph", content: [{ type: "text", text: "before" }] },
+				{ type: "horizontalRule" },
+				{ type: "paragraph", content: [{ type: "text", text: "after" }] },
+			],
+		});
+
+		const horizontalRulePos = findHorizontalRulePos(editor);
+		editor.view.dispatch(
+			editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, horizontalRulePos)),
+		);
+
+		const horizontalRule = editor.options.element?.querySelector("hr");
+		expect(horizontalRule?.classList.contains("pm-rollover-horizontal-rule")).toBe(true);
+		expect(horizontalRule?.getAttribute("data-horizontal-rule-delimiter")).toBe("---");
+		expect(horizontalRule?.getAttribute("data-horizontal-rule-cursor")).toBe("node");
+
+		editor.destroy();
+		editor.options.element?.remove();
+	});
+
+	it("converts a selected horizontal rule to editable markdown text on backspace", () => {
+		const editor = createTestEditor();
+		editor.commands.setContent({
+			type: "doc",
+			content: [
+				{ type: "paragraph", content: [{ type: "text", text: "before" }] },
+				{ type: "horizontalRule" },
+				{ type: "paragraph", content: [{ type: "text", text: "after" }] },
+			],
+		});
+
+		const horizontalRulePos = findHorizontalRulePos(editor);
+		editor.view.dispatch(
+			editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, horizontalRulePos)),
+		);
+
+		expect(pressKey(editor, "Backspace")).toBe(true);
+		expect(editor.getJSON().content?.[1]?.type).toBe("paragraph");
+		expect(editor.getJSON().content?.[1]?.content?.[0]?.text).toBe("--");
+
+		expect(pressKey(editor, "Backspace")).toBe(true);
+		expect(editor.getJSON().content?.[1]?.content?.[0]?.text).toBe("-");
+
+		editor.destroy();
+		editor.options.element?.remove();
+	});
+
+	it("upgrades a markdown --- paragraph to horizontal rule on Enter", () => {
+		const editor = createTestEditor();
+		editor.commands.setContent({
+			type: "doc",
+			content: [{ type: "paragraph", content: [{ type: "text", text: "---" }] }],
+		});
+		editor.commands.setTextSelection(4);
+
+		expect(pressKey(editor, "Enter")).toBe(true);
+		expect(editor.getJSON().content?.[0]?.type).toBe("horizontalRule");
+		expect(editor.getJSON().content?.[1]?.type).toBe("paragraph");
 
 		editor.destroy();
 		editor.options.element?.remove();
