@@ -114,9 +114,9 @@
 		}
 	}
 
-        .ProseMirror {
-                @apply min-h-40 break-words whitespace-pre-wrap font-serif text-[15px] leading-7;
-        }
+	.ProseMirror {
+		@apply min-h-40 break-words whitespace-pre-wrap font-serif text-[15px] leading-7;
+	}
 
 	.ProseMirror p {
 		@apply my-3;
@@ -144,6 +144,47 @@
 
 	.ProseMirror ol {
 		@apply my-3 list-decimal pl-6;
+	}
+
+	.ProseMirror ul[data-type="taskList"] {
+		@apply list-none pl-0;
+	}
+
+	.ProseMirror ul[data-type="taskList"] li {
+		@apply my-1 flex items-start gap-2;
+	}
+
+	.ProseMirror ul[data-type="taskList"] li > label {
+		@apply mt-1;
+	}
+
+	.ProseMirror ul[data-type="taskList"] li > div {
+		@apply flex-1;
+	}
+
+	.ProseMirror blockquote {
+		@apply my-4 border-kumo-line text-kumo-strong border-l-2 pl-4;
+	}
+
+	.ProseMirror a {
+		@apply text-kumo-link underline underline-offset-2;
+	}
+
+	.ProseMirror img {
+		@apply my-4 h-auto max-w-full rounded-md border border-kumo-line;
+	}
+
+	.ProseMirror table {
+		@apply my-4 w-full border-collapse overflow-hidden rounded-md border border-kumo-line;
+	}
+
+	.ProseMirror th,
+	.ProseMirror td {
+		@apply border border-kumo-line px-3 py-2 align-top;
+	}
+
+	.ProseMirror th {
+		@apply bg-kumo-tint text-left font-semibold;
 	}
 
 	.ProseMirror code {
@@ -186,5 +227,4 @@
 		content: attr(data-fence-close);
 		margin-top: 0.25rem;
 	}
-
 }
