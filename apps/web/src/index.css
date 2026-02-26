@@ -73,12 +73,50 @@
 	body {
 		@apply bg-kumo-elevated text-kumo-default antialiased;
 	}
+
+	body[data-font-mode="serif"] {
+		@apply font-serif;
+	}
+
+	body[data-font-mode="mono"] {
+		@apply font-mono;
+	}
 }
 
 @layer components {
-	.ProseMirror {
-		@apply min-h-40 break-words whitespace-pre-wrap font-serif text-[15px] leading-7;
+	.workspace-main {
+		@apply bg-kumo-base;
 	}
+
+	.workspace-divider-v {
+		@apply border-kumo-line;
+	}
+
+	.workspace-divider-h {
+		@apply border-kumo-line border-b;
+	}
+
+	@media (min-width: 1024px) {
+		body:has(aside[data-left-sidebar-open="true"]) .workspace-main {
+			margin-left: 304px; /* 48px rail + 256px panel */
+		}
+
+		body:has(aside[data-left-sidebar-open="false"]) .workspace-main {
+			margin-left: 48px;
+		}
+
+		body:has(aside[data-right-sidebar-open="true"]) .workspace-main {
+			margin-right: 192px; /* w-48 */
+		}
+
+		body:has(aside[data-right-sidebar-open="false"]) .workspace-main {
+			margin-right: 48px; /* w-12 */
+		}
+	}
+
+        .ProseMirror {
+                @apply min-h-40 break-words whitespace-pre-wrap font-serif text-[15px] leading-7;
+        }
 
 	.ProseMirror p {
 		@apply my-3;
@@ -106,6 +144,47 @@
 
 	.ProseMirror ol {
 		@apply my-3 list-decimal pl-6;
+	}
+
+	.ProseMirror code {
+		@apply rounded border border-kumo-line bg-kumo-tint px-1.5 py-0.5 font-mono text-[13px] text-kumo-default;
+	}
+
+	.ProseMirror pre {
+		@apply my-4 overflow-x-auto rounded-lg border border-kumo-line bg-kumo-tint p-4 font-mono text-[13px] leading-6;
+	}
+
+	.ProseMirror pre code {
+		@apply rounded-none border-0 bg-transparent p-0;
+	}
+
+	.shiki-token {
+		color: var(--shiki-light);
+	}
+
+	[data-mode="dark"] .shiki-token {
+		color: var(--shiki-dark);
+	}
+
+	.pm-rollover-code-fenced-block::before,
+	.pm-rollover-code-fenced-block::after {
+		display: block;
+		font-size: 12px;
+		line-height: 1.4;
+		opacity: 0.75;
+		color: var(--text-color-kumo-subtle);
+		user-select: none;
+		pointer-events: none;
+	}
+
+	.pm-rollover-code-fenced-block::before {
+		content: attr(data-fence-open);
+		margin-bottom: 0.25rem;
+	}
+
+	.pm-rollover-code-fenced-block::after {
+		content: attr(data-fence-close);
+		margin-top: 0.25rem;
 	}
 
 }

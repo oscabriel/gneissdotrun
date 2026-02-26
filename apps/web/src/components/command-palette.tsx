@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 export type WorkspacePaletteAction =
 	| { kind: "run"; command: string }
 	| { kind: "workflow"; workflow: "organize" | "fan_out" }
-	| { kind: "navigation"; to: "/collections" | "/digest" | "/history" | "/contradictions" };
+	| { kind: "navigation"; to: "/collections" | "/digest" | "/history" | "/contradictions" }
+	| { kind: "layout"; target: "left" | "right" }
+	| { kind: "focus"; target: "directory_search" | "editor" }
+	| { kind: "utility"; section: "review" | "controls" | "utility" };
 
 interface CommandPaletteProps {
 	onSelectAction?: (action: WorkspacePaletteAction) => void;
@@ -20,6 +23,55 @@ interface PaletteItem {
 }
 
 const paletteItems: PaletteItem[] = [
+	{
+		id: "layout-left",
+		title: "Toggle left directory",
+		description: "Show or hide the notes directory rail",
+		action: { kind: "layout", target: "left" },
+		shortcutHint: "⌘\\",
+	},
+	{
+		id: "layout-right",
+		title: "Toggle right utilities",
+		description: "Show or hide the workspace utility rail",
+		action: { kind: "layout", target: "right" },
+		shortcutHint: "⌘.",
+	},
+	{
+		id: "focus-directory",
+		title: "Focus directory search",
+		description: "Jump to the left sidebar search field",
+		action: { kind: "focus", target: "directory_search" },
+		shortcutHint: "⌘⇧1",
+	},
+	{
+		id: "focus-editor",
+		title: "Focus editor",
+		description: "Move focus to the note editor",
+		action: { kind: "focus", target: "editor" },
+		shortcutHint: "⌘⇧2",
+	},
+	{
+		id: "utility-review",
+		title: "Open review utilities",
+		description: "Focus review actions in the right sidebar",
+		action: { kind: "utility", section: "review" },
+		shortcutHint: "Review",
+	},
+	{
+		id: "utility-controls",
+		title: "Open workspace controls",
+		description: "Focus theme/font/mode controls",
+		action: { kind: "utility", section: "controls" },
+		shortcutHint: "Controls",
+	},
+	{
+		id: "utility-footer",
+		title: "Open utility footer",
+		description: "Focus profile/settings/info actions",
+		action: { kind: "utility", section: "utility" },
+		shortcutHint: "Utility",
+	},
 	{
 		id: "run-summarize",
 		title: "Run summarize on active note",
@@ -143,7 +195,7 @@ export function CommandPalette({ onSelectAction, onOpenChange }: CommandPaletteP
 			}}
 			getSelectableItems={(items) => items}
 		>
-			<KumoCommandPalette.Input placeholder="Run an action or jump to a view..." />
+			<KumoCommandPalette.Input placeholder="Run an action, toggle rails, or jump to a view..." />
 			<KumoCommandPalette.List>
 				<KumoCommandPalette.Results>
 					{(item: PaletteItem) => (
@@ -156,9 +208,7 @@ export function CommandPalette({ onSelectAction, onOpenChange }: CommandPaletteP
 						>
 							<div className="flex w-full items-center justify-between gap-3">
 								<span className="text-kumo-default">{item.title}</span>
-								<span className="text-kumo-subtle text-xs">
-									{item.shortcutHint ?? item.description}
-								</span>
+								<span className="text-kumo-subtle text-xs">{item.shortcutHint ?? item.description}</span>
 							</div>
 						</KumoCommandPalette.Item>
 					)}
@@ -167,15 +217,11 @@ export function CommandPalette({ onSelectAction, onOpenChange }: CommandPaletteP
 			</KumoCommandPalette.List>
 			<KumoCommandPalette.Footer>
 				<span className="flex items-center gap-2">
-					<kbd className="border-kumo-line bg-kumo-base rounded border px-1.5 py-0.5 text-[10px]">
-						↑↓
-					</kbd>
+					<kbd className="border-kumo-line bg-kumo-base rounded border px-1.5 py-0.5 text-[10px]">↑↓</kbd>
 					<span>Navigate</span>
 				</span>
 				<span className="flex items-center gap-2">
-					<kbd className="border-kumo-line bg-kumo-base rounded border px-1.5 py-0.5 text-[10px]">
-						↵
-					</kbd>
+					<kbd className="border-kumo-line bg-kumo-base rounded border px-1.5 py-0.5 text-[10px]">↵</kbd>
 					<span>Run</span>
 				</span>
 			</KumoCommandPalette.Footer>

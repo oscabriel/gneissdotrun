@@ -1,12 +1,19 @@
-import { Button, DropdownMenu } from "@cloudflare/kumo";
-import { useNavigate } from "@tanstack/react-router";
+import { TooltipProvider } from "@cloudflare/kumo";
 import type { RouteExecutionOutcome } from "@gneissdotrun/api/capture-contract";
 import { env } from "@gneissdotrun/env/web";
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { AppShell } from "@/components/layout/app-shell";
-import { NotesSidebar, type SidebarNote } from "@/components/sidebar/notes-sidebar";
+import { CommandPalette, type WorkspacePaletteAction } from "@/components/command-palette";
+import { WorkspaceGridShell } from "@/components/layout/workspace-grid-shell";
+import { NotesDirectory, type NotesDirectoryHandle } from "@/components/sidebar/notes-directory";
+import type { SidebarNote } from "@/components/sidebar/notes-sidebar";
 import { CanvasPane } from "@/components/workspace/canvas-pane";
+import {
+	RightUtilitySidebar,
+	type RightUtilitySidebarHandle,
+	type UtilitySectionId,
+} from "@/components/workspace/right-utility-sidebar";
 import { useIndexAgent } from "@/lib/agents/hooks";
 import { mapOutcomeToUiIntent } from "@/lib/capture";
 import { toast } from "@/lib/toast";
@@ -46,6 +53,17 @@ type CaptureStreamEvent =
 			error?: { message?: string };
 	  };
 
+type ThemeMode = "light" | "dark";
+type FontMode = "mono" | "serif";
+type MarkdownMode = "edit" | "preview";
+
+const THEME_STORAGE_KEY = "theme";
+const LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY = "workspace-left-sidebar-collapsed";
+const RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY = "workspace-right-sidebar-collapsed";
+const FONT_MODE_STORAGE_KEY = "workspace-font-mode";
+const MARKDOWN_MODE_STORAGE_KEY = "workspace-markdown-mode";
+const LAYOUT_SEEN_STORAGE_KEY = "workspace-layout-seen";
+
 function sortByUpdatedAtDesc<T extends { updatedAt: number }>(items: T[]): T[] {
 	return [...items].sort((left, right) => right.updatedAt - left.updatedAt);
 }
@@ -74,11 +92,6 @@ function isTypingTarget(target: EventTarget | null): boolean {
 	return Boolean(target.closest('[contenteditable="true"], [role="textbox"]'));
 }
 
-type ThemeMode = "light" | "dark";
-
-const THEME_STORAGE_KEY = "theme";
-const SIDEBAR_COLLAPSED_STORAGE_KEY = "workspace-sidebar-collapsed";
-
 function readThemeMode(): ThemeMode {
 	if (typeof document === "undefined") {
 		return "light";
@@ -87,9 +100,20 @@ function readThemeMode(): ThemeMode {
 	return document.documentElement.getAttribute("data-mode") === "dark" ? "dark" : "light";
 }
 
+function isMobileViewport(): boolean {
+	if (typeof window === "undefined") {
+		return false;
+	}
+
+	return window.matchMedia("(max-width: 1023px)").matches;
+}
+
 export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: WorkspaceShellProps) {
 	const navigate = useNavigate();
 	const ephemeralTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const directoryRef = useRef<NotesDirectoryHandle | null>(null);
+	const rightUtilityRef = useRef<RightUtilitySidebarHandle | null>(null);
+
 	const [indexNotes, setIndexNotes] = useState<SidebarNote[]>([]);
 	const [apiNotes, setApiNotes] = useState<SidebarNote[]>([]);
 	const [isApiLoading, setIsApiLoading] = useState(false);
@@ -97,8 +121,18 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 	const [isCapturing, setIsCapturing] = useState(false);
 	const [ephemeralContent, setEphemeralContent] = useState<string | null>(null);
 	const [themeMode, setThemeMode] = useState<ThemeMode>("light");
-	const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-	const [isSidebarPreferenceReady, setIsSidebarPreferenceReady] = useState(false);
+	const [fontMode, setFontMode] = useState<FontMode>("mono");
+	const [markdownMode, setMarkdownMode] = useState<MarkdownMode>("edit");
+	const [leftCollapsed, setLeftCollapsed] = useState(false);
+	const [rightCollapsed, setRightCollapsed] = useState(false);
+	const [mobilePanel, setMobilePanel] = useState<"left" | "right" | null>(null);
+	const [editorFocusToken, setEditorFocusToken] = useState(0);
+	const [layoutInteracted, setLayoutInteracted] = useState(false);
+	const [preferencesReady, setPreferencesReady] = useState(false);
+	const [externalRunRequest, setExternalRunRequest] = useState<{
+		command: string;
+		nonce: number;
+	} | null>(null);
 
 	const clearEphemeral = useCallback(() => {
 		if (ephemeralTimerRef.current) {
@@ -162,20 +196,59 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 	useEffect(() => {
 		setThemeMode(readThemeMode());
 		if (typeof window === "undefined") {
-			setIsSidebarPreferenceReady(true);
+			setPreferencesReady(true);
 			return;
 		}
 
-		setIsSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1");
-		setIsSidebarPreferenceReady(true);
+		const hasSeenLayout = window.localStorage.getItem(LAYOUT_SEEN_STORAGE_KEY) === "1";
+		setLayoutInteracted(hasSeenLayout);
+
+		setLeftCollapsed(hasSeenLayout && window.localStorage.getItem(LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY) === "1");
+		setRightCollapsed(
+			hasSeenLayout && window.localStorage.getItem(RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY) === "1",
+		);
+
+		const storedFont = window.localStorage.getItem(FONT_MODE_STORAGE_KEY);
+		if (storedFont === "mono" || storedFont === "serif") {
+			setFontMode(storedFont);
+		}
+
+		const storedMode = window.localStorage.getItem(MARKDOWN_MODE_STORAGE_KEY);
+		if (storedMode === "edit" || storedMode === "preview") {
+			setMarkdownMode(storedMode);
+		}
+
+		setPreferencesReady(true);
 	}, []);
 
 	useEffect(() => {
-		if (!isSidebarPreferenceReady || typeof window === "undefined") {
+		if (!preferencesReady || typeof document === "undefined") {
 			return;
 		}
-		window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, isSidebarCollapsed ? "1" : "0");
-	}, [isSidebarCollapsed, isSidebarPreferenceReady]);
+		document.body.setAttribute("data-font-mode", fontMode);
+	}, [fontMode, preferencesReady]);
+
+	useEffect(() => {
+		if (!preferencesReady || typeof window === "undefined") {
+			return;
+		}
+		window.localStorage.setItem(FONT_MODE_STORAGE_KEY, fontMode);
+	}, [fontMode, preferencesReady]);
+
+	useEffect(() => {
+		if (!preferencesReady || typeof window === "undefined") {
+			return;
+		}
+		window.localStorage.setItem(MARKDOWN_MODE_STORAGE_KEY, markdownMode);
+	}, [markdownMode, preferencesReady]);
+
+	useEffect(() => {
+		if (!preferencesReady || !layoutInteracted || typeof window === "undefined") {
+			return;
+		}
+		window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY, leftCollapsed ? "1" : "0");
+		window.localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY, rightCollapsed ? "1" : "0");
+	}, [layoutInteracted, leftCollapsed, preferencesReady, rightCollapsed]);
 
 	useEffect(() => {
 		return () => {
@@ -253,9 +326,45 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		}
 	}, [isApiLoading, onSelectNoteId, selectedNoteId, sidebarNotes, usingFallback]);
 
+	const markLayoutInteraction = useCallback(() => {
+		if (typeof window !== "undefined") {
+			window.localStorage.setItem(LAYOUT_SEEN_STORAGE_KEY, "1");
+		}
+		setLayoutInteracted(true);
+	}, []);
+
+	const openMobilePanel = useCallback((panel: "left" | "right") => {
+		setMobilePanel((current) => (current === panel ? null : panel));
+	}, []);
+
+	const toggleLeftPanel = useCallback(() => {
+		if (isMobileViewport()) {
+			openMobilePanel("left");
+			return;
+		}
+
+		markLayoutInteraction();
+		setLeftCollapsed((current) => !current);
+	}, [markLayoutInteraction, openMobilePanel]);
+
+	const toggleRightPanel = useCallback(() => {
+		if (isMobileViewport()) {
+			openMobilePanel("right");
+			return;
+		}
+
+		markLayoutInteraction();
+		setRightCollapsed((current) => !current);
+	}, [markLayoutInteraction, openMobilePanel]);
+
+	const closeMobilePanel = useCallback(() => {
+		setMobilePanel(null);
+	}, []);
+
 	const handleSelectNote = (noteId: string) => {
 		clearEphemeral();
 		onSelectNoteId(noteId);
+		closeMobilePanel();
 	};
 
 	const createNewNote = useCallback(async () => {
@@ -587,9 +696,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 				throw new Error(payload.error ?? "Failed to trigger organization");
 			}
 
-			toast.success(
-				noteId ? "Organization refresh queued for this note." : "Organization refresh queued.",
-			);
+			toast.success(noteId ? "Organization refresh queued for this note." : "Organization refresh queued.");
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : "Failed to trigger organization");
 			throw error;
@@ -598,38 +705,36 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		}
 	}, []);
 
-	const handleRunFanOut = useCallback(
-		async ({ noteId, content }: { noteId: string; content: string }) => {
-			setIsCapturing(true);
+	const handleRunFanOut = useCallback(async ({ noteId, content }: { noteId: string; content: string }) => {
+		setIsCapturing(true);
 
-			try {
-				const response = await fetch(`${env.VITE_SERVER_URL}/api/workflows/fanout/run`, {
-					method: "POST",
-					headers: {
-						"content-type": "application/json",
-					},
-					credentials: "include",
-					body: JSON.stringify({
-						sourceNoteId: noteId,
-						input: content,
-					}),
-				});
+		try {
+			const response = await fetch(`${env.VITE_SERVER_URL}/api/workflows/fanout/run`, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+				},
+				credentials: "include",
+				body: JSON.stringify({
+					sourceNoteId: noteId,
+					input: content,
+				}),
+			});
 
-				if (!response.ok) {
-					const payload = (await response.json()) as { error?: string };
-					throw new Error(payload.error ?? "Failed to trigger fan-out workflow");
-				}
-
-				toast.success("Fan-out workflow queued.");
-			} catch (error) {
-				toast.error(error instanceof Error ? error.message : "Failed to trigger fan-out workflow");
-				throw error;
-			} finally {
-				setIsCapturing(false);
+			if (!response.ok) {
+				const payload = (await response.json()) as { error?: string };
+				throw new Error(payload.error ?? "Failed to trigger fan-out workflow");
 			}
-		},
-		[],
-	);
+
+			toast.success("Fan-out workflow queued.");
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : "Failed to trigger fan-out workflow");
+			throw error;
+		} finally {
+			setIsCapturing(false);
+		}
+	}, []);
+
 	const handleCanvasInput = useCallback(() => {
 		clearEphemeral();
 	}, [clearEphemeral]);
@@ -647,13 +752,204 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		}
 	}, []);
 
-	const toggleSidebar = useCallback(() => {
-		setIsSidebarCollapsed((current) => !current);
+	const toggleFontMode = useCallback(() => {
+		setFontMode((current) => (current === "mono" ? "serif" : "mono"));
 	}, []);
+
+	const toggleMarkdownMode = useCallback(() => {
+		setMarkdownMode((current) => (current === "edit" ? "preview" : "edit"));
+	}, []);
+
+	const downloadSelectedNote = useCallback(() => {
+		if (!selectedNote) {
+			toast.warning("Select a note first to download markdown.");
+			return;
+		}
+
+		const content = selectedNote.content ?? "";
+		const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		const safeTitle = (selectedNote.title || "note").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+		anchor.href = url;
+		anchor.download = `${safeTitle || "note"}.md`;
+		anchor.click();
+		URL.revokeObjectURL(url);
+	}, [selectedNote]);
+
+	const focusDirectorySearch = useCallback(() => {
+		if (leftCollapsed) {
+			setLeftCollapsed(false);
+			markLayoutInteraction();
+		}
+		if (isMobileViewport()) {
+			setMobilePanel("left");
+		}
+		requestAnimationFrame(() => {
+			directoryRef.current?.focusSearch();
+		});
+	}, [leftCollapsed, markLayoutInteraction]);
+
+	const focusEditor = useCallback(() => {
+		if (!selectedNoteId) {
+			toast.warning("Select a note first to focus editor.");
+			return;
+		}
+		setEditorFocusToken(Date.now());
+	}, [selectedNoteId]);
+
+	const openUtilitySection = useCallback(
+		(section: UtilitySectionId) => {
+			if (rightCollapsed) {
+				setRightCollapsed(false);
+				markLayoutInteraction();
+			}
+			if (isMobileViewport()) {
+				setMobilePanel("right");
+			}
+			requestAnimationFrame(() => {
+				rightUtilityRef.current?.focusSection(section);
+			});
+		},
+		[markLayoutInteraction, rightCollapsed],
+	);
+
+	const handlePaletteAction = useCallback(
+		async (action: WorkspacePaletteAction) => {
+			handleCanvasInput();
+
+			if (action.kind === "layout") {
+				if (action.target === "left") {
+					toggleLeftPanel();
+					return;
+				}
+				toggleRightPanel();
+				return;
+			}
+
+			if (action.kind === "focus") {
+				if (action.target === "directory_search") {
+					focusDirectorySearch();
+					return;
+				}
+				focusEditor();
+				return;
+			}
+
+			if (action.kind === "utility") {
+				openUtilitySection(action.section);
+				return;
+			}
+
+			if (action.kind === "navigation") {
+				switch (action.to) {
+					case "/collections": {
+						void navigate({ to: "/collections", search: { query: "" } });
+						return;
+					}
+					case "/digest": {
+						void navigate({ to: "/digest" });
+						return;
+					}
+					case "/history": {
+						if (!selectedNote) {
+							toast.warning("Select a note first to open history.");
+							return;
+						}
+
+						void navigate({ to: "/history", search: { noteId: selectedNote.id } });
+						return;
+					}
+					case "/contradictions": {
+						void navigate({ to: "/contradictions" });
+						return;
+					}
+				}
+			}
+
+			if (action.kind === "workflow") {
+				try {
+					if (action.workflow === "organize") {
+						await handleRunOrganization({ noteId: selectedNote?.id });
+						return;
+					}
+
+					if (!selectedNote) {
+						toast.warning("Select a note first to run fan-out.");
+						return;
+					}
+
+					await handleRunFanOut({
+						noteId: selectedNote.id,
+						content: selectedNote.content,
+					});
+				} catch {
+					// errors are surfaced by handlers
+				}
+				return;
+			}
+
+			if (!selectedNote) {
+				toast.warning("Select a note first to run note actions.");
+				return;
+			}
+
+			setExternalRunRequest({
+				command: action.command,
+				nonce: Date.now(),
+			});
+		},
+		[
+			focusDirectorySearch,
+			focusEditor,
+			handleCanvasInput,
+			handleRunFanOut,
+			handleRunOrganization,
+			navigate,
+			openUtilitySection,
+			selectedNote,
+			toggleLeftPanel,
+			toggleRightPanel,
+		],
+	);
 
 	useEffect(() => {
 		const listener = (event: KeyboardEvent) => {
 			if (event.defaultPrevented) {
+				return;
+			}
+
+			if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === "\\") {
+				event.preventDefault();
+				toggleLeftPanel();
+				return;
+			}
+
+			if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === ".") {
+				event.preventDefault();
+				toggleRightPanel();
+				return;
+			}
+
+			if (
+				(event.metaKey || event.ctrlKey) &&
+				event.shiftKey &&
+				!event.altKey &&
+				event.key === "1"
+			) {
+				event.preventDefault();
+				focusDirectorySearch();
+				return;
+			}
+
+			if (
+				(event.metaKey || event.ctrlKey) &&
+				event.shiftKey &&
+				!event.altKey &&
+				event.key === "2"
+			) {
+				event.preventDefault();
+				focusEditor();
 				return;
 			}
 
@@ -677,132 +973,93 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		return () => {
 			window.removeEventListener("keydown", listener);
 		};
-	}, [createNewNote]);
+	}, [createNewNote, focusDirectorySearch, focusEditor, toggleLeftPanel, toggleRightPanel]);
 
 	return (
-		<AppShell
-			sidebarCollapsed={isSidebarCollapsed}
-			sidebarId="notes-sidebar-panel"
-			header={
-				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-					<div className="space-y-1">
-						<h1 className="text-kumo-strong text-2xl font-semibold tracking-tight sm:text-3xl">
-							Gneiss
-						</h1>
-						<p className="text-kumo-subtle text-sm">
-							Ambient knowledge capture powered by Cloudflare agents.
-						</p>
-					</div>
-
-					<div className="flex flex-wrap gap-2">
-						<Button
-							size="base"
-							variant="outline"
-							onClick={() => {
+		<>
+			<TooltipProvider>
+				<WorkspaceGridShell
+					leftCollapsed={leftCollapsed}
+					rightCollapsed={rightCollapsed}
+					onToggleLeft={toggleLeftPanel}
+					onToggleRight={toggleRightPanel}
+					mobilePanel={mobilePanel}
+					onCloseMobilePanel={closeMobilePanel}
+					leftRail={
+						<NotesDirectory
+							ref={directoryRef}
+							notes={sidebarNotes}
+							selectedNoteId={selectedNoteId}
+							onSelectNote={handleSelectNote}
+							isLoading={usingFallback && isApiLoading}
+							error={usingFallback ? apiError : null}
+							usingFallback={usingFallback}
+						/>
+					}
+					main={
+						<CanvasPane
+							selectedNote={selectedNote}
+							onCapture={handleCapture}
+							onSaveNoteContent={handleSaveNoteContent}
+							onArchiveNote={handleArchiveNote}
+							onCreateNote={createNewNote}
+							isCapturing={isCapturing}
+							ephemeralContent={ephemeralContent}
+							onCanvasInput={handleCanvasInput}
+							markdownMode={markdownMode}
+							editorFocusToken={editorFocusToken}
+							externalRunRequest={externalRunRequest}
+						/>
+					}
+					rightRail={
+						<RightUtilitySidebar
+							ref={rightUtilityRef}
+							collapsed={rightCollapsed}
+							onToggle={toggleRightPanel}
+							onCreateNote={() => {
 								void createNewNote();
 							}}
-							aria-keyshortcuts="N"
-							aria-label="Create a new note"
-						>
-							New Note
-						</Button>
-						<Button
-							size="base"
-							variant="outline"
-							onClick={() => {
+							onNavigateHistory={() => {
+								if (!selectedNoteId) {
+									toast.warning("Select a note first to open history.");
+									return;
+								}
+								void navigate({ to: "/history", search: { noteId: selectedNoteId } });
+							}}
+							onNavigateCollections={() => {
+								void navigate({ to: "/collections", search: { query: "" } });
+							}}
+							onNavigateContradictions={() => {
+								void navigate({ to: "/contradictions" });
+							}}
+							onNavigateDigest={() => {
+								void navigate({ to: "/digest" });
+							}}
+							onToggleTheme={toggleThemeMode}
+							themeMode={themeMode}
+							onToggleFont={toggleFontMode}
+							fontMode={fontMode}
+							onToggleMarkdownMode={toggleMarkdownMode}
+							markdownMode={markdownMode}
+							onDownloadMarkdown={downloadSelectedNote}
+							onOpenProfile={() => {
 								void navigate({ to: "/profile" });
 							}}
-						>
-							Profile
-						</Button>
-						<Button
-							size="base"
-							variant="outline"
-							onClick={toggleSidebar}
-							aria-controls="notes-sidebar-panel"
-							aria-expanded={!isSidebarCollapsed}
-						>
-							{isSidebarCollapsed ? "Show Notes" : "Hide Notes"}
-						</Button>
-						<Button
-							size="base"
-							variant="outline"
-							onClick={toggleThemeMode}
-							aria-label={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
-						>
-							{themeMode === "dark" ? "Light" : "Dark"}
-						</Button>
-
-						<DropdownMenu>
-							<DropdownMenu.Trigger render={<Button size="base" variant="outline" />}>
-								Review
-							</DropdownMenu.Trigger>
-							<DropdownMenu.Content>
-								<DropdownMenu.Group>
-									<DropdownMenu.Label>Workspace review surfaces</DropdownMenu.Label>
-									<DropdownMenu.Separator />
-									<DropdownMenu.Item
-										onClick={() => {
-											void navigate({ to: "/collections", search: { query: "" } });
-										}}
-									>
-										Collections review
-									</DropdownMenu.Item>
-									<DropdownMenu.Item
-										onClick={() => {
-											void navigate({ to: "/digest" });
-										}}
-									>
-										Weekly digest
-									</DropdownMenu.Item>
-									<DropdownMenu.Item
-										onClick={() => {
-											void navigate({ to: "/contradictions" });
-										}}
-									>
-										Contradictions review
-									</DropdownMenu.Item>
-									<DropdownMenu.Item
-										onClick={() => {
-											if (!selectedNoteId) {
-												toast.warning("Select a note first to open history.");
-												return;
-											}
-
-											void navigate({ to: "/history", search: { noteId: selectedNoteId } });
-										}}
-									>
-										Note history
-									</DropdownMenu.Item>
-								</DropdownMenu.Group>
-							</DropdownMenu.Content>
-						</DropdownMenu>
-					</div>
-				</div>
-			}
-			sidebar={
-				<NotesSidebar
-					notes={sidebarNotes}
-					selectedNoteId={selectedNoteId}
-					onSelectNote={handleSelectNote}
-					isLoading={usingFallback && isApiLoading}
-					error={usingFallback ? apiError : null}
-					usingFallback={usingFallback}
+							onOpenSettings={() => {
+								toast.warning("Settings is coming soon.");
+							}}
+							onOpenInfo={() => {
+								toast.success("Gneiss captures first and organizes with agents in the background.");
+							}}
+						/>
+					}
 				/>
-			}
-			main={
-				<CanvasPane
-					selectedNote={selectedNote}
-					onCapture={handleCapture}
-					onSaveNoteContent={handleSaveNoteContent}
-					onArchiveNote={handleArchiveNote}
-					onRunOrganization={handleRunOrganization}
-					onRunFanOut={handleRunFanOut}
-					isCapturing={isCapturing}
-					ephemeralContent={ephemeralContent}
-					onCanvasInput={handleCanvasInput}
-				/>
-			}
-		/>
+			</TooltipProvider>
+			<CommandPalette
+				onSelectAction={(action) => {
+					void handlePaletteAction(action);
+				}}
+			/>
+		</>
 	);
 }

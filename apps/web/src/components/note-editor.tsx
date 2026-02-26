@@ -1,5 +1,8 @@
 import { Button, DropdownMenu } from "@cloudflare/kumo";
 import { useCallback, useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 
 import { PmMarkdownEditor } from "@/components/pm-markdown-editor";
 
@@ -26,6 +29,8 @@ interface NoteEditorProps {
 	onEditorInput: () => void;
 	isCapturing: boolean;
 	externalRunRequest?: { command: string; nonce: number } | null;
+	markdownMode?: "edit" | "preview";
+	focusToken?: number;
 }
 
 type SlashInstructionKind = "none" | "editor" | "agent" | "freeform";
@@ -161,6 +166,8 @@ export function NoteEditor({
 	onEditorInput,
 	isCapturing,
 	externalRunRequest,
+	markdownMode = "edit",
+	focusToken,
 }: NoteEditorProps) {
 	const sanitizedInitialContent = normalizeDraftContent(initialContent);
 	const normalizedInitialTitle = normalizeDraftTitle(title);
@@ -338,8 +345,13 @@ export function NoteEditor({
 		setNoteTitle(normalizedTitle);
 		titleRef.current = normalizedTitle;
 		lastAcknowledgedTitleRef.current = normalizedTitle;
-		setNoteContent(sanitized);
-		noteContentRef.current = sanitized;
+		// Only reset editor content when it actually differs after normalization,
+		// so trailing-whitespace-only changes (e.g. pressing Enter to create an
+		// empty paragraph) don't cause a cursor-snapping content reset.
+		if (isNoteSwitch || normalizeDraftContent(noteContentRef.current) !== sanitized) {
+			setNoteContent(sanitized);
+			noteContentRef.current = sanitized;
+		}
 		lastAcknowledgedContentRef.current = sanitized;
 	}, [initialContent, noteId, title]);
 
@@ -362,6 +374,15 @@ export function NoteEditor({
 
 		void runCommandIntent("explicit", externalRunRequest.command);
 	}, [externalRunRequest?.nonce, externalRunRequest?.command, runCommandIntent]);
+
+	useEffect(() => {
+		if (focusToken === undefined) {
+			return;
+		}
+
+		const target = document.querySelector<HTMLElement>("[contenteditable='true']");
+		target?.focus();
+	}, [focusToken]);
 
 	useEffect(() => {
 		return () => {
@@ -450,24 +471,34 @@ export function NoteEditor({
 				</DropdownMenu>
 			</div>
 
-			<PmMarkdownEditor
-				label="Note content"
-				value={noteContent}
-				autoFocus
-				className="min-h-40 pr-28"
-				onChangeMarkdown={(nextMarkdown) => {
-					onEditorInput();
-					setNoteContent(nextMarkdown);
-					noteContentRef.current = nextMarkdown;
-				}}
-				onBlur={() => {
-					void flushSave({ silent: true });
-				}}
-				onRunShortcut={() => {
-					void runCommandIntent("explicit");
-				}}
-				placeholder="Write your note. Add slash commands like /summarize on separate lines."
-			/>
+			{markdownMode === "edit" ? (
+				<PmMarkdownEditor
+					label="Note content"
+					value={noteContent}
+					autoFocus
+					className="min-h-40 pr-28"
+					onChangeMarkdown={(nextMarkdown) => {
+						onEditorInput();
+						setNoteContent(nextMarkdown);
+						noteContentRef.current = nextMarkdown;
+					}}
+					onBlur={() => {
+						void flushSave({ silent: true });
+					}}
+					onRunShortcut={() => {
+						void runCommandIntent("explicit");
+					}}
+					placeholder="Write your note. Add slash commands like /summarize on separate lines."
+				/>
+			) : (
+				<div className="bg-kumo-base min-h-40 rounded-md p-4 pr-28">
+					<article className="prose prose-neutral max-w-none text-kumo-default">
+						<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+							{noteContent.trim().length > 0 ? noteContent : "_Nothing to preview yet._"}
+						</ReactMarkdown>
+					</article>
+				</div>
+			)}
 		</div>
 	);
 }

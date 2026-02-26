@@ -1,10 +1,8 @@
-import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { Button } from "@cloudflare/kumo";
 
-import { CommandPalette, type WorkspacePaletteAction } from "@/components/command-palette";
-import { NoteEditor } from "@/components/note-editor";
 import type { SidebarNote } from "@/components/sidebar/notes-sidebar";
-import { toast } from "@/lib/toast";
+
+import { NoteEditor } from "@/components/note-editor";
 
 interface CanvasPaneProps {
 	selectedNote: SidebarNote | null;
@@ -19,11 +17,13 @@ interface CanvasPaneProps {
 		options?: { silent?: boolean },
 	) => Promise<void>;
 	onArchiveNote: (noteId: string) => Promise<void>;
-	onRunOrganization: (input: { noteId?: string }) => Promise<void>;
-	onRunFanOut: (input: { noteId: string; content: string }) => Promise<void>;
+	onCreateNote: () => void;
 	isCapturing: boolean;
 	ephemeralContent: string | null;
 	onCanvasInput: () => void;
+	markdownMode: "edit" | "preview";
+	editorFocusToken: number;
+	externalRunRequest?: { command: string; nonce: number } | null;
 }
 
 export function CanvasPane({
@@ -31,91 +31,35 @@ export function CanvasPane({
 	onCapture,
 	onSaveNoteContent,
 	onArchiveNote,
-	onRunOrganization,
-	onRunFanOut,
+	onCreateNote,
 	isCapturing,
 	ephemeralContent,
 	onCanvasInput,
+	markdownMode,
+	editorFocusToken,
+	externalRunRequest,
 }: CanvasPaneProps) {
-	const navigate = useNavigate();
-	const [externalRunRequest, setExternalRunRequest] = useState<{
-		command: string;
-		nonce: number;
-	} | null>(null);
-
-	useEffect(() => {
-		setExternalRunRequest(null);
-	}, [selectedNote?.id]);
-
-	const handlePaletteAction = async (action: WorkspacePaletteAction) => {
-		onCanvasInput();
-
-		if (action.kind === "navigation") {
-			switch (action.to) {
-				case "/collections": {
-					void navigate({ to: "/collections", search: { query: "" } });
-					return;
-				}
-				case "/digest": {
-					void navigate({ to: "/digest" });
-					return;
-				}
-				case "/history": {
-					if (!selectedNote) {
-						toast.warning("Select a note first to open history.");
-						return;
-					}
-
-					void navigate({ to: "/history", search: { noteId: selectedNote.id } });
-					return;
-				}
-				case "/contradictions": {
-					void navigate({ to: "/contradictions" });
-					return;
-				}
-			}
-		}
-
-		if (action.kind === "workflow") {
-			try {
-				if (action.workflow === "organize") {
-					await onRunOrganization({ noteId: selectedNote?.id });
-					return;
-				}
-
-				if (!selectedNote) {
-					toast.warning("Select a note first to run fan-out.");
-					return;
-				}
-
-				await onRunFanOut({
-					noteId: selectedNote.id,
-					content: selectedNote.content,
-				});
-			} catch {
-				// errors are surfaced by workspace handlers
-			}
-			return;
-		}
-
-		if (!selectedNote) {
-			toast.warning("Select a note first to run note actions.");
-			return;
-		}
-
-		setExternalRunRequest({
-			command: action.command,
-			nonce: Date.now(),
-		});
-	};
+	if (!selectedNote) {
+		return (
+			<div className="flex h-full items-center justify-center">
+				<Button variant="secondary" onClick={onCreateNote}>
+					Create new note
+				</Button>
+			</div>
+		);
+	}
 
 	return (
-		<>
+		<div className="flex h-full min-h-0 flex-col overflow-hidden p-3 sm:p-4">
 			{ephemeralContent ? (
 				<div className="bg-kumo-tint mb-3 rounded-md px-3 py-2 text-sm">{ephemeralContent}</div>
 			) : null}
 
-			{selectedNote ? (
+			<div className="workspace-divider-h text-kumo-subtle mb-3 pb-2 text-xs tracking-wide uppercase">
+				{selectedNote.title}
+			</div>
+
+			<div className="min-h-0 flex-1 overflow-y-auto">
 				<NoteEditor
 					noteId={selectedNote.id}
 					title={selectedNote.title}
@@ -126,18 +70,10 @@ export function CanvasPane({
 					onEditorInput={onCanvasInput}
 					isCapturing={isCapturing}
 					externalRunRequest={externalRunRequest}
+					markdownMode={markdownMode}
+					focusToken={editorFocusToken}
 				/>
-			) : (
-				<div className="text-kumo-subtle rounded-md px-1 py-4 text-sm">
-					Select a note from the sidebar, or create one with New Note.
-				</div>
-			)}
-
-			<CommandPalette
-				onSelectAction={(action) => {
-					void handlePaletteAction(action);
-				}}
-			/>
-		</>
+			</div>
+		</div>
 	);
 }
