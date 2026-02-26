@@ -13,6 +13,9 @@ import type {
 	PhrasingContent,
 	Root,
 	Strong,
+	Table,
+	TableCell,
+	TableRow,
 	Text,
 } from "mdast";
 import { MARKDOWN_WIKI_PROTOCOL } from "./parse";
@@ -24,6 +27,8 @@ import type {
 	CanonicalDocument,
 	CanonicalInline,
 	CanonicalListItemBlock,
+	CanonicalTableCellBlock,
+	CanonicalTableRowBlock,
 } from "../model/document";
 import type { MarkdownSerializeOptions } from "./types";
 
@@ -107,6 +112,56 @@ function listItemToMdast(item: CanonicalListItemBlock): ListItem {
 	};
 }
 
+function tableCellBlocksToMdastChildren(blocks: CanonicalBlock[]): PhrasingContent[] {
+	const children = blocks.flatMap((block): PhrasingContent[] => {
+		switch (block.type) {
+			case "paragraph":
+				return block.inlines.flatMap((inline) => inlineToMdast(inline));
+			case "heading":
+				return block.inlines.flatMap((inline) => inlineToMdast(inline));
+			case "image":
+				return [
+					{
+						type: "text",
+						value: `![${block.alt}](${block.url})`,
+					},
+				];
+			default:
+				return [
+					{
+						type: "text",
+						value: `[unsupported:${block.type}]`,
+					},
+				];
+		}
+	});
+
+	if (children.length > 0) {
+		return children;
+	}
+
+	return [
+		{
+			type: "text",
+			value: "",
+		},
+	];
+}
+
+function tableCellToMdast(cell: CanonicalTableCellBlock): TableCell {
+	return {
+		type: "tableCell",
+		children: tableCellBlocksToMdastChildren(cell.blocks),
+	};
+}
+
+function tableRowToMdast(row: CanonicalTableRowBlock): TableRow {
+	return {
+		type: "tableRow",
+		children: row.cells.map((cell) => tableCellToMdast(cell)),
+	};
+}
+
 function blockToMdast(block: CanonicalBlock): BlockContent[] {
 	switch (block.type) {
 		case "paragraph": {
@@ -159,6 +214,38 @@ function blockToMdast(block: CanonicalBlock): BlockContent[] {
 				}),
 			};
 			return [listNode];
+		}
+		case "table": {
+			const tableNode: Table = {
+				type: "table",
+				align: null,
+				children: block.rows.map((row) => tableRowToMdast(row)),
+			};
+			return [tableNode];
+		}
+		case "tableRow": {
+			const paragraphNode: Paragraph = {
+				type: "paragraph",
+				children: [
+					{
+						type: "text",
+						value: "[unsupported:tableRow]",
+					},
+				],
+			};
+			return [paragraphNode];
+		}
+		case "tableCell": {
+			const paragraphNode: Paragraph = {
+				type: "paragraph",
+				children: [
+					{
+						type: "text",
+						value: "[unsupported:tableCell]",
+					},
+				],
+			};
+			return [paragraphNode];
 		}
 		case "listItem": {
 			const paragraphNode: Paragraph = {

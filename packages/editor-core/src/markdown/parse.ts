@@ -10,6 +10,9 @@ import type {
 	PhrasingContent,
 	Root,
 	RootContent,
+	Table,
+	TableCell,
+	TableRow,
 } from "mdast";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -20,6 +23,8 @@ import type {
 	CanonicalDocument,
 	CanonicalInline,
 	CanonicalListItemBlock,
+	CanonicalTableCellBlock,
+	CanonicalTableRowBlock,
 } from "../model/document";
 import type {
 	MarkdownParseArtifacts,
@@ -210,6 +215,41 @@ function listItemToCanonical(
 	};
 }
 
+function tableCellToCanonical(
+	node: TableCell,
+	rowIndex: number,
+	unsupportedNodes: MarkdownUnsupportedNode[],
+	wikiProtocol: string,
+): CanonicalTableCellBlock {
+	const inlines = node.children.flatMap((child) =>
+		phrasingToCanonical(child, unsupportedNodes, wikiProtocol),
+	);
+	return {
+		type: "tableCell",
+		header: rowIndex === 0,
+		blocks: [
+			{
+				type: "paragraph",
+				inlines,
+			},
+		],
+	};
+}
+
+function tableRowToCanonical(
+	node: TableRow,
+	rowIndex: number,
+	unsupportedNodes: MarkdownUnsupportedNode[],
+	wikiProtocol: string,
+): CanonicalTableRowBlock {
+	return {
+		type: "tableRow",
+		cells: node.children.map((cell) =>
+			tableCellToCanonical(cell, rowIndex, unsupportedNodes, wikiProtocol),
+		),
+	};
+}
+
 function htmlToCanonical(
 	html: string,
 	unsupportedNodes: MarkdownUnsupportedNode[],
@@ -314,6 +354,17 @@ function blockToCanonical(
 					tight: listNode.spread === false,
 					items: listNode.children.map((item) =>
 						listItemToCanonical(item, unsupportedNodes, wikiProtocol),
+					),
+				},
+			];
+		}
+		case "table": {
+			const tableNode = node as Table;
+			return [
+				{
+					type: "table",
+					rows: tableNode.children.map((row, rowIndex) =>
+						tableRowToCanonical(row, rowIndex, unsupportedNodes, wikiProtocol),
 					),
 				},
 			];

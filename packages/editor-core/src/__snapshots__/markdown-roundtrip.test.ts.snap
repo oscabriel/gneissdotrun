@@ -73,3 +73,50 @@ exports[`markdown roundtrip fixtures round-trips canonical markdown for thematic
 \\<div>Unknown html fallback\\</div>
 "
 `;
+
+exports[`markdown roundtrip fixtures round-trips canonical markdown for blockquotes.md 1`] = `
+"> Quote level one
+>
+> - nested list item
+> - second item
+>
+> Ending line
+
+Outside paragraph.
+"
+`;
+
+exports[`markdown roundtrip fixtures round-trips canonical markdown for combined-bold-italic.md 1`] = `
+"This should keep combined emphasis: ***triple-asterisk*** and ***triple-underscore***.
+"
+`;
+
+exports[`markdown roundtrip fixtures round-trips canonical markdown for escaped-characters.md 1`] = `
+"Escaped characters: \\* \\_ \\\` \\[ ] ( ) \\ # ! |.
+"
+`;
+
+exports[`markdown roundtrip fixtures round-trips canonical markdown for links-images.md 1`] = `
+"Paragraph with [external link](https://example.com/docs "Docs") and [[Project Hub]].
+
+![Diagram](https://cdn.example.com/diagram.png "System diagram")
+"
+`;
+
+exports[`markdown roundtrip fixtures round-trips canonical markdown for tables.md 1`] = `
+"| Feature        | Status      | Notes                                              |
+| -------------- | ----------- | -------------------------------------------------- |
+| Paste markdown | done        | immediate conversion                               |
+| Tables         | in-progress | supports **bold** and [links](https://example.com) |
+"
+`;
+
+exports[`markdown roundtrip fixtures round-trips canonical markdown for task-lists.md 1`] = `
+"- [ ] unchecked task
+- [x] checked task
+- plain bullet
+
+1. ordered item
+2. ordered item two
+"
+`;

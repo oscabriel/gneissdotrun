@@ -9,6 +9,9 @@ export type CanonicalBlock =
 	| CanonicalCodeBlock
 	| CanonicalListBlock
 	| CanonicalListItemBlock
+	| CanonicalTableBlock
+	| CanonicalTableRowBlock
+	| CanonicalTableCellBlock
 	| CanonicalThematicBreakBlock
 	| CanonicalImageBlock;
 
@@ -46,6 +49,22 @@ export interface CanonicalListBlock {
 export interface CanonicalListItemBlock {
 	type: "listItem";
 	checked: boolean | null;
+	blocks: CanonicalBlock[];
+}
+
+export interface CanonicalTableBlock {
+	type: "table";
+	rows: CanonicalTableRowBlock[];
+}
+
+export interface CanonicalTableRowBlock {
+	type: "tableRow";
+	cells: CanonicalTableCellBlock[];
+}
+
+export interface CanonicalTableCellBlock {
+	type: "tableCell";
+	header: boolean;
 	blocks: CanonicalBlock[];
 }
 
