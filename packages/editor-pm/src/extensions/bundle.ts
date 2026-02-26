@@ -1,9 +1,16 @@
 import type { AnyExtension } from "@tiptap/core";
+import Image from "@tiptap/extension-image";
+import { Table } from "@tiptap/extension-table";
+import TableCell from "@tiptap/extension-table-cell";
+import TableHeader from "@tiptap/extension-table-header";
+import TableRow from "@tiptap/extension-table-row";
 import StarterKit from "@tiptap/starter-kit";
 
 import { DelimiterRolloverExtension } from "./delimiter-rollover";
 import { FakeSelectionExtension } from "./fake-selection";
 import { listExtensions } from "./list-normalization";
+import { MarkdownPasteExtension } from "./markdown-paste";
+import { MarkdownShortcutsExtension } from "./markdown-shortcuts";
 import { ShikiHighlightExtension } from "./shiki-highlight";
 import { WikiAwareLinkExtension } from "./wiki-link";
 
@@ -26,7 +33,16 @@ export function createEditorPmExtensions(options?: EditorPmExtensionOptions): An
 			link: false,
 		}),
 		WikiAwareLinkExtension,
+		Image,
+		Table.configure({
+			resizable: false,
+		}),
+		TableRow,
+		TableHeader,
+		TableCell,
 		...listExtensions,
+		MarkdownShortcutsExtension,
+		MarkdownPasteExtension,
 	];
 
 	if (includeDelimiterRollover) {

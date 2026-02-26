@@ -12,6 +12,8 @@ describe("editor-pm extensions", () => {
 		expect(names).toContain("delimiterRollover");
 		expect(names).toContain("fakeSelection");
 		expect(names).toContain("listNormalization");
+		expect(names).toContain("markdownPaste");
+		expect(names).toContain("markdownShortcuts");
 	});
 
 	it("supports fake-selection state transitions", () => {

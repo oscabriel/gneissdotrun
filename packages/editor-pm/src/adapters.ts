@@ -5,6 +5,8 @@ import {
 	type CanonicalBlock,
 	type CanonicalDocument,
 	type CanonicalInline,
+	type CanonicalTableCellBlock,
+	type CanonicalTableRowBlock,
 } from "@gneissdotrun/editor-core";
 
 import type { EditorPmAdapterOptions, ProseMirrorJsonDoc } from "./types";
@@ -136,6 +138,27 @@ function canonicalListToPm(
 	};
 }
 
+function canonicalTableCellToPm(
+	cell: CanonicalTableCellBlock,
+	options?: EditorPmAdapterOptions,
+): JSONContent {
+	const content = cell.blocks.flatMap((block) => canonicalBlockToPm(block, options));
+	return {
+		type: cell.header ? "tableHeader" : "tableCell",
+		content: content.length > 0 ? content : [{ type: "paragraph" }],
+	};
+}
+
+function canonicalTableRowToPm(
+	row: CanonicalTableRowBlock,
+	options?: EditorPmAdapterOptions,
+): JSONContent {
+	return {
+		type: "tableRow",
+		content: row.cells.map((cell) => canonicalTableCellToPm(cell, options)),
+	};
+}
+
 function canonicalBlockToPm(
 	block: CanonicalBlock,
 	options?: EditorPmAdapterOptions,
@@ -180,6 +203,27 @@ function canonicalBlockToPm(
 				{
 					type: "listItem",
 					content: block.blocks.flatMap((child) => canonicalBlockToPm(child, options)),
+				},
+			];
+		case "table":
+			return [
+				{
+					type: "table",
+					content: block.rows.map((row) => canonicalTableRowToPm(row, options)),
+				},
+			];
+		case "tableRow":
+			return [
+				{
+					type: "paragraph",
+					content: [textNode("[unsupported:tableRow]")],
+				},
+			];
+		case "tableCell":
+			return [
+				{
+					type: "paragraph",
+					content: [textNode("[unsupported:tableCell]")],
 				},
 			];
 		case "thematicBreak":
@@ -265,6 +309,23 @@ function textNodeToCanonical(node: JSONContent): CanonicalInline[] {
 	return [current];
 }
 
+function pmTableCellToCanonical(node: JSONContent, header: boolean): CanonicalTableCellBlock {
+	return {
+		type: "tableCell",
+		header,
+		blocks: (node.content ?? []).flatMap((child) => pmNodeToCanonical(child)),
+	};
+}
+
+function pmTableRowToCanonical(node: JSONContent): CanonicalTableRowBlock {
+	return {
+		type: "tableRow",
+		cells: (node.content ?? []).map((child) =>
+			pmTableCellToCanonical(child, child.type === "tableHeader"),
+		),
+	};
+}
+
 function pmNodeToCanonical(node: JSONContent): CanonicalBlock[] {
 	switch (node.type) {
 		case "paragraph":
@@ -325,6 +386,13 @@ function pmNodeToCanonical(node: JSONContent): CanonicalBlock[] {
 				},
 			];
 		}
+		case "table":
+			return [
+				{
+					type: "table",
+					rows: (node.content ?? []).map((row) => pmTableRowToCanonical(row)),
+				},
+			];
 		case "horizontalRule":
 			return [
 				{
