@@ -223,7 +223,15 @@ export async function runAutoRewriteForNote(
 	await env.DB.prepare(
 		"UPDATE notes SET title = ?1, content = ?2, summary = ?3, updated_at = ?4, processed_at = NULL WHERE id = ?5 AND user_id = ?6 AND deleted_at IS NULL AND updated_at = ?7",
 	)
-		.bind(nextTitle, rewritten, summary, updatedAt, input.noteId, input.userId, input.expectedUpdatedAt)
+		.bind(
+			nextTitle,
+			rewritten,
+			summary,
+			updatedAt,
+			input.noteId,
+			input.userId,
+			input.expectedUpdatedAt,
+		)
 		.run();
 
 	const persisted = await loadNote(env, input.userId, input.noteId);

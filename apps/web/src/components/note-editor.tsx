@@ -355,7 +355,6 @@ export function NoteEditor({
 		lastAcknowledgedContentRef.current = sanitized;
 	}, [initialContent, noteId, title]);
 
-
 	useEffect(() => {
 		clearAutosaveTimer();
 		autosaveTimerRef.current = setTimeout(() => {
@@ -395,7 +394,6 @@ export function NoteEditor({
 			void flushSave({ silent: true });
 		};
 	}, [clearAutosaveTimer, flushSave, runCommandIntent]);
-
 
 	const handleRename = async () => {
 		const nextTitle = window.prompt("Rename note", titleRef.current);
@@ -492,7 +490,7 @@ export function NoteEditor({
 				/>
 			) : (
 				<div className="bg-kumo-base min-h-40 rounded-md p-4 pr-28">
-					<article className="prose prose-neutral max-w-none text-kumo-default">
+					<article className="prose prose-neutral text-kumo-default max-w-none">
 						<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
 							{noteContent.trim().length > 0 ? noteContent : "_Nothing to preview yet._"}
 						</ReactMarkdown>

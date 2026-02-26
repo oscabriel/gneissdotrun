@@ -100,7 +100,10 @@ function collectMarkRanges(block: ActiveTextBlock): MarkRange[] {
 	return ranges;
 }
 
-function getBoundaryMarkRange(state: EditorState, boundary: Exclude<RolloverBoundary, null>): MarkRange | null {
+function getBoundaryMarkRange(
+	state: EditorState,
+	boundary: Exclude<RolloverBoundary, null>,
+): MarkRange | null {
 	const activeBlock = findActiveTextBlock(state);
 	if (!activeBlock) {
 		return null;
@@ -131,8 +134,7 @@ function detectBoundary(state: EditorState): RolloverBoundary {
 	for (const markName of MARK_ORDER) {
 		const range = ranges.find(
 			(candidate) =>
-				candidate.markName === markName &&
-				(candidate.from === cursor || candidate.to === cursor),
+				candidate.markName === markName && (candidate.from === cursor || candidate.to === cursor),
 		);
 		if (!range) {
 			continue;

@@ -203,7 +203,9 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		const hasSeenLayout = window.localStorage.getItem(LAYOUT_SEEN_STORAGE_KEY) === "1";
 		setLayoutInteracted(hasSeenLayout);
 
-		setLeftCollapsed(hasSeenLayout && window.localStorage.getItem(LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY) === "1");
+		setLeftCollapsed(
+			hasSeenLayout && window.localStorage.getItem(LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY) === "1",
+		);
 		setRightCollapsed(
 			hasSeenLayout && window.localStorage.getItem(RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY) === "1",
 		);
@@ -696,7 +698,9 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 				throw new Error(payload.error ?? "Failed to trigger organization");
 			}
 
-			toast.success(noteId ? "Organization refresh queued for this note." : "Organization refresh queued.");
+			toast.success(
+				noteId ? "Organization refresh queued for this note." : "Organization refresh queued.",
+			);
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : "Failed to trigger organization");
 			throw error;
@@ -705,35 +709,38 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		}
 	}, []);
 
-	const handleRunFanOut = useCallback(async ({ noteId, content }: { noteId: string; content: string }) => {
-		setIsCapturing(true);
+	const handleRunFanOut = useCallback(
+		async ({ noteId, content }: { noteId: string; content: string }) => {
+			setIsCapturing(true);
 
-		try {
-			const response = await fetch(`${env.VITE_SERVER_URL}/api/workflows/fanout/run`, {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-				},
-				credentials: "include",
-				body: JSON.stringify({
-					sourceNoteId: noteId,
-					input: content,
-				}),
-			});
+			try {
+				const response = await fetch(`${env.VITE_SERVER_URL}/api/workflows/fanout/run`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+					},
+					credentials: "include",
+					body: JSON.stringify({
+						sourceNoteId: noteId,
+						input: content,
+					}),
+				});
 
-			if (!response.ok) {
-				const payload = (await response.json()) as { error?: string };
-				throw new Error(payload.error ?? "Failed to trigger fan-out workflow");
+				if (!response.ok) {
+					const payload = (await response.json()) as { error?: string };
+					throw new Error(payload.error ?? "Failed to trigger fan-out workflow");
+				}
+
+				toast.success("Fan-out workflow queued.");
+			} catch (error) {
+				toast.error(error instanceof Error ? error.message : "Failed to trigger fan-out workflow");
+				throw error;
+			} finally {
+				setIsCapturing(false);
 			}
-
-			toast.success("Fan-out workflow queued.");
-		} catch (error) {
-			toast.error(error instanceof Error ? error.message : "Failed to trigger fan-out workflow");
-			throw error;
-		} finally {
-			setIsCapturing(false);
-		}
-	}, []);
+		},
+		[],
+	);
 
 	const handleCanvasInput = useCallback(() => {
 		clearEphemeral();
@@ -770,7 +777,10 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
 		const url = URL.createObjectURL(blob);
 		const anchor = document.createElement("a");
-		const safeTitle = (selectedNote.title || "note").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+		const safeTitle = (selectedNote.title || "note")
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-|-$/g, "");
 		anchor.href = url;
 		anchor.download = `${safeTitle || "note"}.md`;
 		anchor.click();
@@ -919,13 +929,23 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 				return;
 			}
 
-			if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === "\\") {
+			if (
+				(event.metaKey || event.ctrlKey) &&
+				!event.shiftKey &&
+				!event.altKey &&
+				event.key === "\\"
+			) {
 				event.preventDefault();
 				toggleLeftPanel();
 				return;
 			}
 
-			if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === ".") {
+			if (
+				(event.metaKey || event.ctrlKey) &&
+				!event.shiftKey &&
+				!event.altKey &&
+				event.key === "."
+			) {
 				event.preventDefault();
 				toggleRightPanel();
 				return;

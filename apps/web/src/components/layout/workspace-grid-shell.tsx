@@ -30,8 +30,8 @@ export function WorkspaceGridShell({
 	return (
 		<>
 			{/* Desktop left rail — always visible */}
-			<aside className="fixed inset-y-0 left-0 z-40 hidden w-12 flex-col border-r border-kumo-line bg-kumo-elevated lg:flex">
-				<div className="flex h-12 items-center justify-center border-b border-kumo-line">
+			<aside className="border-kumo-line bg-kumo-elevated fixed inset-y-0 left-0 z-40 hidden w-12 flex-col border-r lg:flex">
+				<div className="border-kumo-line flex h-12 items-center justify-center border-b">
 					<Tooltip content={leftCollapsed ? "Open directory (⌘\\)" : "Close directory (⌘\\)"}>
 						<Button
 							size="sm"
@@ -55,12 +55,14 @@ export function WorkspaceGridShell({
 				id="workspace-left-rail"
 				data-left-sidebar-open={leftCollapsed ? "false" : "true"}
 				className={cn(
-					"fixed inset-y-0 left-12 z-30 hidden w-64 flex-col border-kumo-line bg-kumo-elevated transition-transform duration-300 ease-out will-change-transform lg:flex",
+					"border-kumo-line bg-kumo-elevated fixed inset-y-0 left-12 z-30 hidden w-64 flex-col transition-transform duration-300 ease-out will-change-transform lg:flex",
 					leftCollapsed ? "-translate-x-full" : "translate-x-0 border-r",
 				)}
 			>
-				<div className="flex h-12 shrink-0 items-center justify-center border-b border-kumo-line">
-					<p className="text-kumo-subtle text-xs font-medium tracking-[0.25em] uppercase">Gneiss.run</p>
+				<div className="border-kumo-line flex h-12 shrink-0 items-center justify-center border-b">
+					<p className="text-kumo-subtle text-xs font-medium tracking-[0.25em] uppercase">
+						Gneiss.run
+					</p>
 				</div>
 				<div className="flex min-h-0 flex-1 flex-col overflow-hidden">{leftRail}</div>
 			</aside>
@@ -70,7 +72,7 @@ export function WorkspaceGridShell({
 				id="workspace-right-rail"
 				data-right-sidebar-open={rightCollapsed ? "false" : "true"}
 				className={cn(
-					"fixed inset-y-0 right-0 z-40 hidden flex-col border-l border-kumo-line bg-kumo-elevated transition-[width] duration-300 ease-out lg:flex",
+					"border-kumo-line bg-kumo-elevated fixed inset-y-0 right-0 z-40 hidden flex-col border-l transition-[width] duration-300 ease-out lg:flex",
 					rightCollapsed ? "w-12" : "w-48",
 				)}
 			>
@@ -83,12 +85,24 @@ export function WorkspaceGridShell({
 			</main>
 
 			{/* Mobile top bar */}
-			<header className="fixed inset-x-0 top-0 z-50 flex h-12 items-center justify-between border-b border-kumo-line bg-kumo-elevated px-3 lg:hidden">
-				<Button size="sm" variant="ghost" shape="square" onClick={onToggleLeft} aria-label="Open notes directory">
+			<header className="border-kumo-line bg-kumo-elevated fixed inset-x-0 top-0 z-50 flex h-12 items-center justify-between border-b px-3 lg:hidden">
+				<Button
+					size="sm"
+					variant="ghost"
+					shape="square"
+					onClick={onToggleLeft}
+					aria-label="Open notes directory"
+				>
 					<Menu className="size-4" aria-hidden />
 				</Button>
 				<span className="text-kumo-strong text-sm font-semibold tracking-tight">Gneiss</span>
-				<Button size="sm" variant="ghost" shape="square" onClick={onToggleRight} aria-label="Open utilities">
+				<Button
+					size="sm"
+					variant="ghost"
+					shape="square"
+					onClick={onToggleRight}
+					aria-label="Open utilities"
+				>
 					<PanelRight className="size-4" aria-hidden />
 				</Button>
 			</header>
@@ -96,7 +110,7 @@ export function WorkspaceGridShell({
 			{/* Mobile left drawer */}
 			{mobilePanel === "left" ? (
 				<div
-					className="fixed inset-0 z-50 bg-kumo-overlay/70 lg:hidden"
+					className="bg-kumo-overlay/70 fixed inset-0 z-50 lg:hidden"
 					onClick={onCloseMobilePanel}
 					onKeyDown={(e) => {
 						if (e.key === "Escape") {
@@ -105,14 +119,19 @@ export function WorkspaceGridShell({
 					}}
 				>
 					<aside
-						className="h-full w-72 border-r border-kumo-line bg-kumo-elevated"
+						className="border-kumo-line bg-kumo-elevated h-full w-72 border-r"
 						onClick={(e) => {
 							e.stopPropagation();
 						}}
 					>
-						<div className="flex h-12 items-center justify-between border-b border-kumo-line px-3">
+						<div className="border-kumo-line flex h-12 items-center justify-between border-b px-3">
 							<span className="text-kumo-strong text-sm font-semibold">Directory</span>
-							<Button size="sm" variant="ghost" onClick={onCloseMobilePanel} aria-label="Close directory">
+							<Button
+								size="sm"
+								variant="ghost"
+								onClick={onCloseMobilePanel}
+								aria-label="Close directory"
+							>
 								Close
 							</Button>
 						</div>
@@ -124,7 +143,7 @@ export function WorkspaceGridShell({
 			{/* Mobile right drawer */}
 			{mobilePanel === "right" ? (
 				<div
-					className="fixed inset-0 z-50 bg-kumo-overlay/70 lg:hidden"
+					className="bg-kumo-overlay/70 fixed inset-0 z-50 lg:hidden"
 					onClick={onCloseMobilePanel}
 					onKeyDown={(e) => {
 						if (e.key === "Escape") {
@@ -134,7 +153,7 @@ export function WorkspaceGridShell({
 				>
 					<div className="flex h-full justify-end">
 						<aside
-							className="h-full w-12 border-l border-kumo-line bg-kumo-elevated"
+							className="border-kumo-line bg-kumo-elevated h-full w-12 border-l"
 							onClick={(e) => {
 								e.stopPropagation();
 							}}

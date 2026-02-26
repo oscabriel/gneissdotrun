@@ -109,28 +109,40 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 		useImperativeHandle(ref, () => ({
 			focusSection: (section) => {
 				if (section === "review") {
-					(document.getElementById("workspace-review-primary-action") as HTMLElement | null)?.focus();
+					(
+						document.getElementById("workspace-review-primary-action") as HTMLElement | null
+					)?.focus();
 					return;
 				}
 				if (section === "controls") {
-					(document.getElementById("workspace-controls-primary-action") as HTMLElement | null)?.focus();
+					(
+						document.getElementById("workspace-controls-primary-action") as HTMLElement | null
+					)?.focus();
 					return;
 				}
-				(document.getElementById("workspace-utility-primary-action") as HTMLElement | null)?.focus();
+				(
+					document.getElementById("workspace-utility-primary-action") as HTMLElement | null
+				)?.focus();
 			},
 		}));
 
 		const groupClass = cn(
-			"flex flex-col gap-1 border-b border-kumo-line py-2",
+			"border-kumo-line flex flex-col gap-1 border-b py-2",
 			collapsed ? "items-center" : "px-2",
 		);
 
 		return (
 			<div className="flex h-full flex-col overflow-hidden">
 				{/* Toggle */}
-				<div className="flex h-12 shrink-0 items-center justify-end border-b border-kumo-line px-2">
+				<div className="border-kumo-line flex h-12 shrink-0 items-center justify-end border-b px-2">
 					<Tooltip content={collapsed ? "Open utilities (⌘.)" : "Close utilities (⌘.)"}>
-						<Button size="sm" variant="ghost" shape="square" onClick={onToggle} aria-label="Toggle utility sidebar">
+						<Button
+							size="sm"
+							variant="ghost"
+							shape="square"
+							onClick={onToggle}
+							aria-label="Toggle utility sidebar"
+						>
 							{collapsed ? (
 								<PanelRightOpen className="size-4" aria-hidden />
 							) : (
@@ -148,7 +160,9 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 				{/* Review */}
 				<div className={groupClass}>
 					{!collapsed && (
-						<p className="text-kumo-subtle px-2 text-[11px] font-medium tracking-[0.15em] uppercase">Review</p>
+						<p className="text-kumo-subtle px-2 text-[11px] font-medium tracking-[0.15em] uppercase">
+							Review
+						</p>
 					)}
 					<RailButton
 						icon={History}
@@ -157,20 +171,32 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 						onClick={onNavigateHistory}
 						id="workspace-review-primary-action"
 					/>
-					<RailButton icon={Layers} label="Collections" collapsed={collapsed} onClick={onNavigateCollections} />
+					<RailButton
+						icon={Layers}
+						label="Collections"
+						collapsed={collapsed}
+						onClick={onNavigateCollections}
+					/>
 					<RailButton
 						icon={WandSparkles}
 						label="Contradictions"
 						collapsed={collapsed}
 						onClick={onNavigateContradictions}
 					/>
-					<RailButton icon={BookOpenText} label="Digest" collapsed={collapsed} onClick={onNavigateDigest} />
+					<RailButton
+						icon={BookOpenText}
+						label="Digest"
+						collapsed={collapsed}
+						onClick={onNavigateDigest}
+					/>
 				</div>
 
 				{/* Controls */}
 				<div className={groupClass}>
 					{!collapsed && (
-						<p className="text-kumo-subtle px-2 text-[11px] font-medium tracking-[0.15em] uppercase">Workspace</p>
+						<p className="text-kumo-subtle px-2 text-[11px] font-medium tracking-[0.15em] uppercase">
+							Workspace
+						</p>
 					)}
 					<RailButton
 						icon={themeMode === "dark" ? Sun : Moon}
@@ -191,11 +217,18 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 						collapsed={collapsed}
 						onClick={onToggleMarkdownMode}
 					/>
-					<RailButton icon={Download} label="Download (.md)" collapsed={collapsed} onClick={onDownloadMarkdown} />
+					<RailButton
+						icon={Download}
+						label="Download (.md)"
+						collapsed={collapsed}
+						onClick={onDownloadMarkdown}
+					/>
 				</div>
 
 				{/* Footer */}
-				<div className={cn("mt-auto flex flex-col gap-1 py-2", collapsed ? "items-center" : "px-2")}>
+				<div
+					className={cn("mt-auto flex flex-col gap-1 py-2", collapsed ? "items-center" : "px-2")}
+				>
 					<RailButton
 						icon={CircleUserRound}
 						label="Profile"

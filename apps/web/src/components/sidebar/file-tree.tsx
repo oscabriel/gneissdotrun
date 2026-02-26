@@ -32,7 +32,14 @@ interface FileTreeFolderProps {
 	onClick: () => void;
 }
 
-export function FileTreeFolder({ name, count, expanded, active, depth, onClick }: FileTreeFolderProps) {
+export function FileTreeFolder({
+	name,
+	count,
+	expanded,
+	active,
+	depth,
+	onClick,
+}: FileTreeFolderProps) {
 	return (
 		<button
 			type="button"
@@ -70,7 +77,14 @@ interface FileTreeItemProps {
 	onClick: () => void;
 }
 
-export function FileTreeItem({ name, subtitle, selected, active, depth, onClick }: FileTreeItemProps) {
+export function FileTreeItem({
+	name,
+	subtitle,
+	selected,
+	active,
+	depth,
+	onClick,
+}: FileTreeItemProps) {
 	return (
 		<button
 			type="button"

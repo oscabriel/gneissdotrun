@@ -480,15 +480,7 @@ app.post("/api/notes/:noteId/revert", noteIdParamValidator, revertNoteValidator,
 	await c.env.DB.prepare(
 		"UPDATE notes SET title = ?1, content = ?2, summary = ?3, tags = ?4, updated_at = ?5, processed_at = NULL WHERE id = ?6 AND user_id = ?7 AND deleted_at IS NULL",
 	)
-		.bind(
-			title,
-			version.content,
-			summary,
-			JSON.stringify(version.tags),
-			now,
-			noteId,
-			user.id,
-		)
+		.bind(title, version.content, summary, JSON.stringify(version.tags), now, noteId, user.id)
 		.run();
 
 	const newVersionId = await createNoteVersion(c.env.DB, {
@@ -659,9 +651,7 @@ app.post("/api/notes", createNoteValidator, async (c) => {
 	const input = c.req.valid("json");
 	const noteId = crypto.randomUUID();
 	const title = sanitizeTitleForStorage(
-		input.title && input.title.length > 0
-			? input.title
-			: deriveNoteTitleFromContent(input.content),
+		input.title && input.title.length > 0 ? input.title : deriveNoteTitleFromContent(input.content),
 	);
 	const now = Date.now();
 

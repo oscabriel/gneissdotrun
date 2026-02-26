@@ -96,7 +96,9 @@ class FakeD1Database {
 		) {
 			const [userId, excludeId] = params as [string, string];
 			return [...this.notes.values()]
-				.filter((note) => note.userId === userId && note.deletedAt === null && note.id !== excludeId)
+				.filter(
+					(note) => note.userId === userId && note.deletedAt === null && note.id !== excludeId,
+				)
 				.sort((left, right) => right.updatedAt - left.updatedAt)
 				.map((note) => ({ id: note.id, title: note.title }));
 		}

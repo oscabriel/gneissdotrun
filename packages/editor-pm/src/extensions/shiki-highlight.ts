@@ -121,9 +121,7 @@ export const ShikiHighlightExtension = Extension.create({
 			.then((h) => {
 				highlighter = h;
 				if (!editorRef.isDestroyed) {
-					editorRef.view.dispatch(
-						editorRef.view.state.tr.setMeta(shikiHighlightPluginKey, true),
-					);
+					editorRef.view.dispatch(editorRef.view.state.tr.setMeta(shikiHighlightPluginKey, true));
 				}
 			})
 			.catch(() => {

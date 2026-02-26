@@ -208,7 +208,9 @@ export function CommandPalette({ onSelectAction, onOpenChange }: CommandPaletteP
 						>
 							<div className="flex w-full items-center justify-between gap-3">
 								<span className="text-kumo-default">{item.title}</span>
-								<span className="text-kumo-subtle text-xs">{item.shortcutHint ?? item.description}</span>
+								<span className="text-kumo-subtle text-xs">
+									{item.shortcutHint ?? item.description}
+								</span>
 							</div>
 						</KumoCommandPalette.Item>
 					)}
@@ -217,11 +219,15 @@ export function CommandPalette({ onSelectAction, onOpenChange }: CommandPaletteP
 			</KumoCommandPalette.List>
 			<KumoCommandPalette.Footer>
 				<span className="flex items-center gap-2">
-					<kbd className="border-kumo-line bg-kumo-base rounded border px-1.5 py-0.5 text-[10px]">↑↓</kbd>
+					<kbd className="border-kumo-line bg-kumo-base rounded border px-1.5 py-0.5 text-[10px]">
+						↑↓
+					</kbd>
 					<span>Navigate</span>
 				</span>
 				<span className="flex items-center gap-2">
-					<kbd className="border-kumo-line bg-kumo-base rounded border px-1.5 py-0.5 text-[10px]">↵</kbd>
+					<kbd className="border-kumo-line bg-kumo-base rounded border px-1.5 py-0.5 text-[10px]">
+						↵
+					</kbd>
 					<span>Run</span>
 				</span>
 			</KumoCommandPalette.Footer>

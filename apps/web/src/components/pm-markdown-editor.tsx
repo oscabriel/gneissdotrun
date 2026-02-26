@@ -82,7 +82,11 @@ export function tryInlineCodeInputRuleFallback(
 		return false;
 	}
 
-	const tr = state.tr.replaceWith(openingPos, from, state.schema.text(codeText, [codeMark.create()]));
+	const tr = state.tr.replaceWith(
+		openingPos,
+		from,
+		state.schema.text(codeText, [codeMark.create()]),
+	);
 	tr.removeStoredMark(codeMark);
 	view.dispatch(tr);
 	return true;
