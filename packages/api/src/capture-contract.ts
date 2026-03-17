@@ -1,3 +1,5 @@
+import type { SlashCommandIntent } from "./slash-commands";
+
 export const routeExecutionKinds = [
 	"new_note",
 	"update_existing",
@@ -11,6 +13,22 @@ export const routeExecutionKinds = [
 ] as const;
 
 export type RouteExecutionKind = (typeof routeExecutionKinds)[number];
+
+export const captureInvocationSources = ["note_run", "blank_capture", "palette_run"] as const;
+
+export type CaptureInvocationSource = (typeof captureInvocationSources)[number];
+
+export const captureRunModes = ["content_only", "slash_only", "content_and_slash"] as const;
+
+export type CaptureRunMode = (typeof captureRunModes)[number];
+
+export interface CaptureRequest {
+	noteId?: string;
+	userInput: string;
+	invocationSource?: CaptureInvocationSource;
+	pendingCommands?: SlashCommandIntent[];
+	runMode?: CaptureRunMode;
+}
 
 export type RouteExecutionUiAction = "open_note" | "stay_blank" | "show_ephemeral" | "show_toast";
 

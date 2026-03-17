@@ -14,6 +14,10 @@ interface NoteHistoryEventInput {
 	routeKind: string;
 	prompt: string;
 	actionSummary: string;
+	interactionType?: "capture" | "slash_command" | "workspace_action";
+	commandName?: string | null;
+	commandArgument?: string;
+	sourceNoteIds?: string[];
 	versionId?: string;
 	createdAt?: number;
 }
@@ -23,6 +27,10 @@ interface NoteHistoryEntryRow {
 	route_kind: string;
 	prompt: string;
 	action_summary: string;
+	interaction_type: string | null;
+	command_name: string | null;
+	command_argument: string | null;
+	source_note_ids: string | null;
 	version_id: string | null;
 	created_at: number;
 	version_created_at: number | null;
@@ -40,6 +48,17 @@ interface NoteVersionRow {
 
 const historySchemaReadyDatabases = new WeakSet<D1Database>();
 
+async function safeAddColumn(db: D1Database, sql: string): Promise<void> {
+	try {
+		await db.prepare(sql).run();
+	} catch (error) {
+		if (error instanceof Error && /duplicate column name/i.test(error.message)) {
+			return;
+		}
+		throw error;
+	}
+}
+
 export async function ensureHistorySchema(db: D1Database): Promise<void> {
 	if (historySchemaReadyDatabases.has(db)) {
 		return;
@@ -53,9 +72,23 @@ export async function ensureHistorySchema(db: D1Database): Promise<void> {
 
 	await db
 		.prepare(
-			"CREATE TABLE IF NOT EXISTS note_history_events (id text PRIMARY KEY NOT NULL, note_id text NOT NULL, user_id text NOT NULL, route_kind text NOT NULL, prompt text NOT NULL DEFAULT '', action_summary text NOT NULL, version_id text, created_at integer NOT NULL, FOREIGN KEY (note_id) REFERENCES notes(id) ON UPDATE no action ON DELETE cascade, FOREIGN KEY (user_id) REFERENCES user(id) ON UPDATE no action ON DELETE cascade, FOREIGN KEY (version_id) REFERENCES note_versions(id) ON UPDATE no action ON DELETE set null)",
+			"CREATE TABLE IF NOT EXISTS note_history_events (id text PRIMARY KEY NOT NULL, note_id text NOT NULL, user_id text NOT NULL, route_kind text NOT NULL, prompt text NOT NULL DEFAULT '', action_summary text NOT NULL, interaction_type text NOT NULL DEFAULT 'capture', command_name text, command_argument text NOT NULL DEFAULT '', source_note_ids text NOT NULL DEFAULT '[]', version_id text, created_at integer NOT NULL, FOREIGN KEY (note_id) REFERENCES notes(id) ON UPDATE no action ON DELETE cascade, FOREIGN KEY (user_id) REFERENCES user(id) ON UPDATE no action ON DELETE cascade, FOREIGN KEY (version_id) REFERENCES note_versions(id) ON UPDATE no action ON DELETE set null)",
 		)
 		.run();
+
+	await safeAddColumn(
+		db,
+		"ALTER TABLE note_history_events ADD COLUMN interaction_type text NOT NULL DEFAULT 'capture'",
+	);
+	await safeAddColumn(db, "ALTER TABLE note_history_events ADD COLUMN command_name text");
+	await safeAddColumn(
+		db,
+		"ALTER TABLE note_history_events ADD COLUMN command_argument text NOT NULL DEFAULT ''",
+	);
+	await safeAddColumn(
+		db,
+		"ALTER TABLE note_history_events ADD COLUMN source_note_ids text NOT NULL DEFAULT '[]'",
+	);
 
 	await db
 		.prepare("CREATE INDEX IF NOT EXISTS note_versions_noteId_idx ON note_versions (note_id)")
@@ -120,7 +153,7 @@ export async function createNoteHistoryEvent(
 
 	await db
 		.prepare(
-			"INSERT INTO note_history_events (id, note_id, user_id, route_kind, prompt, action_summary, version_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+			"INSERT INTO note_history_events (id, note_id, user_id, route_kind, prompt, action_summary, interaction_type, command_name, command_argument, source_note_ids, version_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
 		)
 		.bind(
 			eventId,
@@ -129,6 +162,10 @@ export async function createNoteHistoryEvent(
 			input.routeKind,
 			input.prompt,
 			input.actionSummary,
+			input.interactionType ?? "capture",
+			input.commandName ?? null,
+			input.commandArgument ?? "",
+			JSON.stringify(input.sourceNoteIds ?? []),
 			input.versionId ?? null,
 			createdAt,
 		)
@@ -148,6 +185,10 @@ export async function listNoteHistory(
 		routeKind: string;
 		prompt: string;
 		actionSummary: string;
+		interactionType: string;
+		commandName: string | null;
+		commandArgument: string;
+		sourceNoteIds: string[];
 		versionId: string | null;
 		timestamp: number;
 		versionCreatedAt: number | null;
@@ -155,20 +196,33 @@ export async function listNoteHistory(
 > {
 	const rows = await db
 		.prepare(
-			"SELECT e.id, e.route_kind, e.prompt, e.action_summary, e.version_id, e.created_at, v.created_at AS version_created_at FROM note_history_events e LEFT JOIN note_versions v ON v.id = e.version_id WHERE e.user_id = ?1 AND e.note_id = ?2 ORDER BY e.created_at DESC LIMIT ?3",
+			"SELECT e.id, e.route_kind, e.prompt, e.action_summary, e.interaction_type, e.command_name, e.command_argument, e.source_note_ids, e.version_id, e.created_at, v.created_at AS version_created_at FROM note_history_events e LEFT JOIN note_versions v ON v.id = e.version_id WHERE e.user_id = ?1 AND e.note_id = ?2 ORDER BY e.created_at DESC LIMIT ?3",
 		)
 		.bind(userId, noteId, limit)
 		.all<NoteHistoryEntryRow>();
 
-	return (rows.results ?? []).map((row) => ({
-		id: row.id,
-		routeKind: row.route_kind,
-		prompt: row.prompt,
-		actionSummary: row.action_summary,
-		versionId: row.version_id,
-		timestamp: row.created_at,
-		versionCreatedAt: row.version_created_at,
-	}));
+	return (rows.results ?? []).map((row) => {
+		let sourceNoteIds: string[] = [];
+		try {
+			sourceNoteIds = row.source_note_ids ? (JSON.parse(row.source_note_ids) as string[]) : [];
+		} catch {
+			sourceNoteIds = [];
+		}
+
+		return {
+			id: row.id,
+			routeKind: row.route_kind,
+			prompt: row.prompt,
+			actionSummary: row.action_summary,
+			interactionType: row.interaction_type ?? "capture",
+			commandName: row.command_name,
+			commandArgument: row.command_argument ?? "",
+			sourceNoteIds,
+			versionId: row.version_id,
+			timestamp: row.created_at,
+			versionCreatedAt: row.version_created_at,
+		};
+	});
 }
 
 export async function getNoteVersion(

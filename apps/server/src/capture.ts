@@ -1,11 +1,13 @@
 import type {
 	CaptureErrorCode,
+	CaptureRequest,
 	CaptureSideEffect,
 	FanOutQueueStatus,
 	RouteExecutionKind,
 	RouteExecutionOutcome,
 	RouteExecutionSecondaryEffect,
 } from "@gneissdotrun/api/capture-contract";
+import { stripSlashCommandLines as stripPendingSlashCommandLines } from "@gneissdotrun/api/slash-commands";
 import { getAgentByName } from "agents";
 
 import type { IndexAgent, OrganizationAgent, RouterAgent } from "./agents";
@@ -19,11 +21,10 @@ import {
 	shouldAutoRetitle,
 } from "./note-title";
 import { triggerOrganizationRefresh } from "./organization-refresh";
+import { createSlashCommandExecutionPlan, getPrimarySlashCommand } from "./slash-commands";
 
-interface CaptureRequestInput {
+interface CaptureRequestInput extends CaptureRequest {
 	userId: string;
-	noteId?: string;
-	userInput: string;
 }
 
 export type RewriteProgressUpdate =
@@ -212,9 +213,7 @@ function compactSummary(content: string): string {
 }
 
 function stripSlashCommandLines(input: string): string {
-	const lines = input.split("\n");
-	const filtered = lines.filter((line) => !/^\s*\/[a-z-]+(?:\s+.*)?\s*$/i.test(line.trim()));
-	return filtered.join("\n").trimEnd();
+	return stripPendingSlashCommandLines(input);
 }
 
 function parseTags(raw: string): string[] {
@@ -354,6 +353,7 @@ async function rewriteNoteContent(
 	userInput: string,
 	currentNoteId?: string,
 	options?: {
+		commandContext?: import("./slash-commands").RewriteCommandContext;
 		onProgress?: (update: RewriteProgressUpdate) => Promise<void> | void;
 		onLifecycleEvent?: (event: CaptureLifecycleEvent) => Promise<void> | void;
 	},
@@ -378,6 +378,7 @@ async function rewriteNoteContent(
 			userInput,
 			routing: toRoutingDecision(decision),
 			wikiLinkCandidates,
+			commandContext: options?.commandContext,
 			temperature: 0.2,
 			onDelta: async (delta) => {
 				if (!options?.onProgress) {
@@ -1087,6 +1088,45 @@ function collectHistoryNoteIds(
 	return [...noteIds];
 }
 
+function buildHistoryMetadata(
+	request: CaptureRequestInput,
+	decision: CaptureExecutionResult["decision"],
+	slashExecutionPlan?: Awaited<ReturnType<typeof createSlashCommandExecutionPlan>> | null,
+): {
+	interactionType: "capture" | "slash_command" | "workspace_action";
+	commandName: string | null;
+	commandArgument: string;
+	sourceNoteIds: string[];
+} {
+	const primarySlashCommand = getPrimarySlashCommand(request.pendingCommands, request.userInput);
+	if (primarySlashCommand) {
+		return {
+			interactionType: "slash_command",
+			commandName: primarySlashCommand.commandName,
+			commandArgument: primarySlashCommand.argument,
+			sourceNoteIds:
+				slashExecutionPlan?.rewriteContext.sourceNoteIds ??
+				(request.noteId ? [request.noteId] : []),
+		};
+	}
+
+	if (decision.kind === "workspace_action") {
+		return {
+			interactionType: "workspace_action",
+			commandName: null,
+			commandArgument: "",
+			sourceNoteIds: request.noteId ? [request.noteId] : [],
+		};
+	}
+
+	return {
+		interactionType: "capture",
+		commandName: null,
+		commandArgument: "",
+		sourceNoteIds: request.noteId ? [request.noteId] : [],
+	};
+}
+
 const ORGANIZE_MUTATION_KINDS = new Set<RouteExecutionKind>([
 	"new_note",
 	"update_existing",
@@ -1153,6 +1193,7 @@ async function recordCaptureHistory(
 	request: CaptureRequestInput,
 	decision: CaptureExecutionResult["decision"],
 	outcome: RouteExecutionOutcome,
+	slashExecutionPlan?: Awaited<ReturnType<typeof createSlashCommandExecutionPlan>> | null,
 ): Promise<void> {
 	const noteIds = collectHistoryNoteIds(request, decision, outcome);
 	if (noteIds.length === 0) {
@@ -1162,6 +1203,7 @@ async function recordCaptureHistory(
 	await ensureHistorySchema(env.DB);
 	const prompt = request.userInput.trim().slice(0, 5000);
 	const actionSummary = buildHistoryActionSummary(decision, outcome);
+	const historyMetadata = buildHistoryMetadata(request, decision, slashExecutionPlan);
 
 	for (const noteId of noteIds) {
 		const note = await getNoteById(env, request.userId, noteId);
@@ -1184,6 +1226,10 @@ async function recordCaptureHistory(
 			routeKind: decision.kind,
 			prompt,
 			actionSummary,
+			interactionType: historyMetadata.interactionType,
+			commandName: historyMetadata.commandName,
+			commandArgument: historyMetadata.commandArgument,
+			sourceNoteIds: historyMetadata.sourceNoteIds,
 			versionId,
 		});
 	}
@@ -1194,6 +1240,7 @@ async function safeRecordCaptureHistory(
 	request: CaptureRequestInput,
 	decision: CaptureExecutionResult["decision"],
 	outcome: RouteExecutionOutcome,
+	slashExecutionPlan?: Awaited<ReturnType<typeof createSlashCommandExecutionPlan>> | null,
 ): Promise<CaptureSideEffect> {
 	if (collectHistoryNoteIds(request, decision, outcome).length === 0) {
 		return {
@@ -1204,7 +1251,7 @@ async function safeRecordCaptureHistory(
 	}
 
 	try {
-		await recordCaptureHistory(env, request, decision, outcome);
+		await recordCaptureHistory(env, request, decision, outcome, slashExecutionPlan);
 		return {
 			name: "history",
 			status: "ok",
@@ -1318,7 +1365,17 @@ export async function executeCapture(
 		noteId: request.noteId,
 	});
 
-	let decision = await classifyDecision(env, request.userId, request, targetNote);
+	const slashExecutionPlan = await createSlashCommandExecutionPlan(env, {
+		userId: request.userId,
+		targetNote,
+		userInput: request.userInput,
+		pendingCommands: request.pendingCommands,
+		invocationSource: request.invocationSource,
+	});
+
+	let decision = slashExecutionPlan
+		? normalizeDecision(slashExecutionPlan.routing)
+		: await classifyDecision(env, request.userId, request, targetNote);
 	const cleanedInput = stripSlashCommandLines(request.userInput).trim();
 	const executionSideEffects: CaptureSideEffect[] = [];
 
@@ -1344,6 +1401,7 @@ export async function executeCapture(
 			cleanedInput || request.userInput,
 			undefined,
 			{
+				commandContext: slashExecutionPlan?.rewriteContext,
 				onProgress: options.onRewriteProgress,
 				onLifecycleEvent: options.onLifecycleEvent,
 			},
@@ -1381,6 +1439,7 @@ export async function executeCapture(
 			request.userInput,
 			note.id,
 			{
+				commandContext: slashExecutionPlan?.rewriteContext,
 				onProgress: options.onRewriteProgress,
 				onLifecycleEvent: options.onLifecycleEvent,
 			},
@@ -1450,6 +1509,7 @@ export async function executeCapture(
 					request.userInput,
 					targetNote.id,
 					{
+						commandContext: slashExecutionPlan?.rewriteContext,
 						onProgress: options.onRewriteProgress,
 						onLifecycleEvent: options.onLifecycleEvent,
 					},
@@ -1500,6 +1560,7 @@ export async function executeCapture(
 						segment,
 						undefined,
 						{
+							commandContext: slashExecutionPlan?.rewriteContext,
 							onProgress: index === 0 ? options.onRewriteProgress : undefined,
 							onLifecycleEvent: options.onLifecycleEvent,
 						},
@@ -1548,6 +1609,7 @@ export async function executeCapture(
 					cleanedInput || request.userInput,
 					targetNote?.id,
 					{
+						commandContext: slashExecutionPlan?.rewriteContext,
 						onProgress: options.onRewriteProgress,
 						onLifecycleEvent: options.onLifecycleEvent,
 					},
@@ -1690,7 +1752,9 @@ export async function executeCapture(
 				break;
 			}
 			case "ephemeral_answer": {
-				const question = request.userInput.replace(/^\/ask\s*/i, "").trim();
+				const question =
+					slashExecutionPlan?.command.argument ||
+					request.userInput.replace(/^\/ask\s*/i, "").trim();
 				result = {
 					decision,
 					outcome: normalizeOutcome({
@@ -1771,7 +1835,13 @@ export async function executeCapture(
 		}
 
 		executionSideEffects.push(
-			await safeRecordCaptureHistory(env, request, result.decision, result.outcome),
+			await safeRecordCaptureHistory(
+				env,
+				request,
+				result.decision,
+				result.outcome,
+				slashExecutionPlan,
+			),
 		);
 
 		executionSideEffects.push(

@@ -19,6 +19,9 @@ import {
 	createRewriteStatusPayload,
 } from "./rewrite-stream";
 import type { AgentEnv, RewriteAgentState, RoutingDecision } from "./shared";
+import { createNoteHistoryEvent, createNoteVersion, ensureHistorySchema } from "../history";
+import { deriveNoteTitleFromContent, shouldAutoRetitle } from "../note-title";
+import { createSlashCommandExecutionPlan, type SlashCommandExecutionPlan } from "../slash-commands";
 
 const DEFAULT_ROUTING: RoutingDecision = {
 	kind: "new_note",
@@ -47,6 +50,50 @@ interface RewriteStatusData {
 	emittedAt: number;
 }
 
+interface RewriteRequestBody {
+	invocationSource?: "note_run" | "blank_capture" | "palette_run";
+	interactionType?: "slash_command";
+	noteId?: string;
+	userId?: string;
+	title?: string;
+	noteContent?: string;
+	pendingCommand?: {
+		kind: "editor" | "agent" | "freeform";
+		commandName: string | null;
+		argument: string;
+		raw: string;
+		label: string;
+		isKnown: boolean;
+	};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function parseRewriteRequestBody(body: unknown): RewriteRequestBody | null {
+	if (!isRecord(body)) {
+		return null;
+	}
+
+	return body as RewriteRequestBody;
+}
+
+function summarizeText(content: string): string {
+	return content.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function buildHistorySummary(
+	plan: SlashCommandExecutionPlan | null,
+	routing: RoutingDecision,
+): string {
+	if (plan?.command.commandName) {
+		return `Applied /${plan.command.commandName} to refine the note.`;
+	}
+
+	return `Persisted ${routing.kind.replaceAll("_", " ")} rewrite.`;
+}
+
 export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 	initialState: RewriteAgentState = {
 		noteId: "",
@@ -62,29 +109,61 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 		options?: OnChatMessageOptions,
 	) {
 		const latestUserInput = getLatestUserInput(this.messages);
-		const routing = this.state.routingContext ?? DEFAULT_ROUTING;
+		const requestBody = parseRewriteRequestBody(options?.body);
+		const noteId = requestBody?.noteId ?? this.state.noteId;
+		const userId = requestBody?.userId ?? this.state.userId;
+		const title = requestBody?.title ?? this.state.title;
+		const noteContent = requestBody?.noteContent ?? this.state.noteContent;
+		const slashPlan = requestBody?.pendingCommand
+			? await createSlashCommandExecutionPlan(this.env, {
+					userId,
+					targetNote: noteId
+						? {
+								id: noteId,
+								title,
+								content: noteContent,
+								summary: summarizeText(noteContent),
+								tags: [],
+								updatedAt: Date.now(),
+								createdAt: Date.now(),
+							}
+						: null,
+					userInput: latestUserInput,
+					pendingCommands: [requestBody.pendingCommand],
+					invocationSource: requestBody.invocationSource,
+				})
+			: null;
+		const routing = slashPlan?.routing ?? this.state.routingContext ?? DEFAULT_ROUTING;
+		const preparedState = {
+			...this.state,
+			noteId,
+			userId,
+			title,
+			noteContent,
+			routingContext: routing,
+			updatedAt: Date.now(),
+		};
+		this.setState(preparedState);
 		const routingPayload = {
 			kind: routing.kind,
 			reason: routing.reason,
 		};
 		const requestId = createRewriteRequestId({
-			noteId: this.state.noteId,
+			noteId,
 			userInput: latestUserInput,
 			messageCount: this.messages.length,
 		});
-		const noteContent = this.state.noteContent.trim().length
-			? this.state.noteContent
-			: "(empty note)";
+		const renderableNoteContent = noteContent.trim().length ? noteContent : "(empty note)";
 
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				const id = `${requestId}-text`;
-				const noteId = this.state.noteId || "";
+				const noteIdValue = noteId || "";
 
 				const startedPayload: RewriteStatusData = createRewriteStatusPayload({
 					requestId,
 					status: "started",
-					noteId,
+					noteId: noteIdValue,
 					routeKind: routing.kind,
 				});
 
@@ -100,9 +179,10 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 				});
 
 				const { prompt, runtime, text } = await executeRewrite({
-					noteContent,
+					noteContent: renderableNoteContent,
 					userInput: latestUserInput,
 					routing,
+					commandContext: slashPlan?.rewriteContext,
 					abortSignal: options?.abortSignal,
 					onDelta: async (delta) => {
 						for (const chunk of splitIntoChunks(delta)) {
@@ -118,7 +198,7 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 				const trimmed = text.trim();
 				const persisted = trimmed.length > 0;
 				if (trimmed.length > 0) {
-					await this.persistRewrite(trimmed, routing, routingPayload);
+					await this.persistRewrite(trimmed, routing, routingPayload, slashPlan);
 				}
 
 				writer.write({
@@ -144,7 +224,7 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 				const completionPayload: RewriteStatusData = createRewriteStatusPayload({
 					requestId,
 					status: persisted ? "persisted" : "skipped",
-					noteId,
+					noteId: noteIdValue,
 					routeKind: routing.kind,
 				});
 
@@ -163,10 +243,16 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 		noteContent: string,
 		routing: RoutingDecision,
 		routingPayload: { kind: string; reason: string },
+		slashPlan: SlashCommandExecutionPlan | null,
 	): Promise<void> {
 		const now = Date.now();
+		const nextTitle = shouldAutoRetitle(this.state.title)
+			? deriveNoteTitleFromContent(noteContent)
+			: this.state.title;
+		const summary = summarizeText(noteContent);
 		this.setState({
 			...this.state,
+			title: nextTitle,
 			noteContent,
 			routingContext: routing,
 			updatedAt: now,
@@ -176,12 +262,10 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 			return;
 		}
 
-		const summary = noteContent.slice(0, 240);
-
 		const indexStub = await persistNoteAndNotify(this.env, {
 			noteId: this.state.noteId,
 			userId: this.state.userId,
-			title: this.state.title,
+			title: nextTitle,
 			content: noteContent,
 			summary,
 			tags: routing.tags ?? [],
@@ -191,6 +275,34 @@ export class RewriteAgent extends AIChatAgent<AgentEnv, RewriteAgentState> {
 		});
 
 		await notifyIndexAgent(this.env, this.state.userId, indexStub);
+
+		try {
+			await ensureHistorySchema(this.env.DB);
+			const versionId = await createNoteVersion(this.env.DB, {
+				noteId: this.state.noteId,
+				userId: this.state.userId,
+				title: nextTitle,
+				content: noteContent,
+				summary,
+				tags: routing.tags ?? [],
+				createdAt: now,
+			});
+			await createNoteHistoryEvent(this.env.DB, {
+				noteId: this.state.noteId,
+				userId: this.state.userId,
+				routeKind: routing.kind,
+				prompt: slashPlan?.command.raw ?? "RewriteAgent interaction.",
+				actionSummary: buildHistorySummary(slashPlan, routing),
+				interactionType: slashPlan ? "slash_command" : "capture",
+				commandName: slashPlan?.command.commandName ?? null,
+				commandArgument: slashPlan?.command.argument ?? "",
+				sourceNoteIds: slashPlan?.rewriteContext.sourceNoteIds ?? [],
+				versionId,
+				createdAt: now,
+			});
+		} catch (error) {
+			console.error("RewriteAgent failed to persist history", error);
+		}
 
 		try {
 			const namespace = this.env.ORGANIZATION_AGENT as DurableObjectNamespace;

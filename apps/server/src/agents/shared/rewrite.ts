@@ -1,6 +1,7 @@
 import { google } from "@ai-sdk/google";
 import { streamText } from "ai";
 
+import type { RewriteCommandContext } from "../../slash-commands";
 import type { RoutingDecision } from "./agent-env";
 import { buildRewritePrompt } from "./prompt";
 
@@ -9,6 +10,7 @@ interface GenerateRewriteTextInput {
 	userInput: string;
 	routing: RoutingDecision;
 	wikiLinkCandidates?: Array<{ id: string; title: string }>;
+	commandContext?: RewriteCommandContext;
 	temperature?: number;
 	onDelta?: (delta: string) => Promise<void> | void;
 	abortSignal?: AbortSignal;
@@ -61,6 +63,7 @@ export async function generateRewriteText(
 		userInput: input.userInput,
 		routing: input.routing,
 		wikiLinkCandidates: input.wikiLinkCandidates,
+		commandContext: input.commandContext,
 	});
 	const apiKey = resolveGoogleApiKey();
 	if (!apiKey) {

@@ -131,6 +131,21 @@ const updateNoteValidator = validator("json", (value, c) => {
 const capturePayloadSchema = z.object({
 	noteId: z.uuid().optional(),
 	userInput: z.string().trim().min(1).max(50_000),
+	invocationSource: z.enum(["note_run", "blank_capture", "palette_run"]).optional(),
+	runMode: z.enum(["content_only", "slash_only", "content_and_slash"]).optional(),
+	pendingCommands: z
+		.array(
+			z.object({
+				kind: z.enum(["editor", "agent", "freeform"]),
+				commandName: z.string().trim().min(1).nullable(),
+				argument: z.string().max(20_000),
+				raw: z.string().trim().min(1).max(20_000),
+				label: z.string().trim().min(1).max(60),
+				isKnown: z.boolean(),
+			}),
+		)
+		.max(20)
+		.optional(),
 });
 
 const captureValidator = validator("json", (value, c) => {
