@@ -1,5 +1,5 @@
 import { Button, Dialog, TooltipProvider } from "@cloudflare/kumo";
-import type { RouteExecutionOutcome } from "@gneissdotrun/api/capture-contract";
+import type { CaptureRequest, RouteExecutionOutcome } from "@gneissdotrun/api/capture-contract";
 import { env } from "@gneissdotrun/env/web";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -15,6 +15,8 @@ import {
 	type UtilitySectionId,
 } from "@/components/workspace/right-utility-sidebar";
 import { useIndexAgent } from "@/lib/agents/hooks";
+import { toggleEditorMode, type EditorMode } from "@/lib/editor/editor-mode";
+import { toggleEditorWidth, type EditorWidth } from "@/lib/editor/editor-width";
 import { mapOutcomeToUiIntent } from "@/lib/capture";
 import { toast } from "@/lib/toast";
 
@@ -73,13 +75,13 @@ type CaptureStreamEvent =
 
 type ThemeMode = "light" | "dark";
 type FontMode = "mono" | "serif";
-type MarkdownMode = "edit" | "preview";
 
 const THEME_STORAGE_KEY = "theme";
 const LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY = "workspace-left-sidebar-collapsed";
 const RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY = "workspace-right-sidebar-collapsed";
 const FONT_MODE_STORAGE_KEY = "workspace-font-mode";
-const MARKDOWN_MODE_STORAGE_KEY = "workspace-markdown-mode";
+const EDITOR_MODE_STORAGE_KEY = "workspace-editor-mode";
+const EDITOR_WIDTH_STORAGE_KEY = "workspace-editor-width";
 const LAYOUT_SEEN_STORAGE_KEY = "workspace-layout-seen";
 
 function sortByUpdatedAtDesc<T extends { updatedAt: number }>(items: T[]): T[] {
@@ -143,14 +145,16 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 	const [ephemeralContent, setEphemeralContent] = useState<string | null>(null);
 	const [themeMode, setThemeMode] = useState<ThemeMode>("light");
 	const [fontMode, setFontMode] = useState<FontMode>("mono");
-	const [markdownMode, setMarkdownMode] = useState<MarkdownMode>("edit");
+	const [editorWidth, setEditorWidth] = useState<EditorWidth>("full");
+	const [editorMode, setEditorMode] = useState<EditorMode>("source");
+	const [previewOpen, setPreviewOpen] = useState(false);
 	const [leftCollapsed, setLeftCollapsed] = useState(false);
 	const [rightCollapsed, setRightCollapsed] = useState(false);
 	const [mobilePanel, setMobilePanel] = useState<"left" | "right" | null>(null);
 	const [editorFocusToken, setEditorFocusToken] = useState(0);
 	const [layoutInteracted, setLayoutInteracted] = useState(false);
 	const [preferencesReady, setPreferencesReady] = useState(false);
-	const [externalRunRequest, setExternalRunRequest] = useState<{
+	const [externalCommandRequest, setExternalCommandRequest] = useState<{
 		command: string;
 		nonce: number;
 	} | null>(null);
@@ -255,9 +259,14 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 			setFontMode(storedFont);
 		}
 
-		const storedMode = window.localStorage.getItem(MARKDOWN_MODE_STORAGE_KEY);
-		if (storedMode === "edit" || storedMode === "preview") {
-			setMarkdownMode(storedMode);
+		const storedWidth = window.localStorage.getItem(EDITOR_WIDTH_STORAGE_KEY);
+		if (storedWidth === "narrow" || storedWidth === "full") {
+			setEditorWidth(storedWidth);
+		}
+
+		const storedMode = window.localStorage.getItem(EDITOR_MODE_STORAGE_KEY);
+		if (storedMode === "source" || storedMode === "rich") {
+			setEditorMode(storedMode);
 		}
 
 		setPreferencesReady(true);
@@ -281,8 +290,15 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		if (!preferencesReady || typeof window === "undefined") {
 			return;
 		}
-		window.localStorage.setItem(MARKDOWN_MODE_STORAGE_KEY, markdownMode);
-	}, [markdownMode, preferencesReady]);
+		window.localStorage.setItem(EDITOR_WIDTH_STORAGE_KEY, editorWidth);
+	}, [editorWidth, preferencesReady]);
+
+	useEffect(() => {
+		if (!preferencesReady || typeof window === "undefined") {
+			return;
+		}
+		window.localStorage.setItem(EDITOR_MODE_STORAGE_KEY, editorMode);
+	}, [editorMode, preferencesReady]);
 
 	useEffect(() => {
 		if (!preferencesReady || !layoutInteracted || typeof window === "undefined") {
@@ -409,7 +425,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		closeMobilePanel();
 	};
 
-	const createNewNote = useCallback(async () => {
+	const createNewNote = useCallback(async (): Promise<string | null> => {
 		clearEphemeral();
 		setIsCapturing(true);
 
@@ -435,8 +451,10 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 			const payload = (await response.json()) as { note: { id: string } };
 			await fetchApiNotes();
 			onSelectNoteId(payload.note.id);
+			return payload.note.id;
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : "Failed to create note");
+			return null;
 		} finally {
 			setIsCapturing(false);
 		}
@@ -444,7 +462,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 
 	const handleCapture = useCallback(
 		async (
-			input: { userInput: string; noteId?: string },
+			input: CaptureRequest,
 			options?: {
 				onRewriteProgress?: (update: RewriteProgressUpdate) => void;
 			},
@@ -777,6 +795,33 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		[fetchApiNotes, handleRestoreNote, onSelectNoteId, selectedNoteId],
 	);
 
+	const handleNoteRewritePersisted = useCallback(async () => {
+		await fetchApiNotes();
+	}, [fetchApiNotes]);
+
+	const handleEditorNotice = useCallback(
+		(notice: { tone: "info" | "success" | "warning" | "error"; message: string }) => {
+			switch (notice.tone) {
+				case "error": {
+					toast.error(notice.message);
+					break;
+				}
+				case "warning": {
+					toast.warning(notice.message);
+					break;
+				}
+				case "info": {
+					toast.success(notice.message);
+					break;
+				}
+				default: {
+					toast.success(notice.message);
+				}
+			}
+		},
+		[],
+	);
+
 	const handleRunOrganization = useCallback(async ({ noteId }: { noteId?: string }) => {
 		setIsCapturing(true);
 
@@ -863,8 +908,17 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 		setFontMode((current) => (current === "mono" ? "serif" : "mono"));
 	}, []);
 
-	const toggleMarkdownMode = useCallback(() => {
-		setMarkdownMode((current) => (current === "edit" ? "preview" : "edit"));
+	const handleToggleEditorWidth = useCallback(() => {
+		setEditorWidth((current) => toggleEditorWidth(current));
+	}, []);
+
+	const handleToggleEditorMode = useCallback(() => {
+		setEditorMode((current) => toggleEditorMode(current));
+		setPreviewOpen(false);
+	}, []);
+
+	const handleTogglePreview = useCallback(() => {
+		setPreviewOpen((current) => !current);
 	}, []);
 
 	const downloadSelectedNote = useCallback(() => {
@@ -1000,16 +1054,19 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 			}
 
 			if (!selectedNote) {
-				toast.warning("Select a note first to run note actions.");
-				return;
+				const createdNoteId = await createNewNote();
+				if (!createdNoteId) {
+					return;
+				}
 			}
 
-			setExternalRunRequest({
+			setExternalCommandRequest({
 				command: action.command,
 				nonce: Date.now(),
 			});
 		},
 		[
+			createNewNote,
 			focusDirectorySearch,
 			focusEditor,
 			handleCanvasInput,
@@ -1119,6 +1176,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 					}
 					main={
 						<CanvasPane
+							userId={userId}
 							selectedNote={selectedNote}
 							onCapture={handleCapture}
 							onSaveNoteContent={handleSaveNoteContent}
@@ -1128,10 +1186,14 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 							runStateByNoteId={noteProcessingStates}
 							ephemeralContent={ephemeralContent}
 							onCanvasInput={handleCanvasInput}
-							markdownMode={markdownMode}
+							editorWidth={editorWidth}
+							editorMode={editorMode}
+							previewOpen={previewOpen}
 							editorFocusToken={editorFocusToken}
-							externalRunRequest={externalRunRequest}
+							externalCommandRequest={externalCommandRequest}
 							rightSidebarCollapsed={rightCollapsed}
+							onNotify={handleEditorNotice}
+							onRewritePersisted={handleNoteRewritePersisted}
 						/>
 					}
 					rightRail={
@@ -1162,8 +1224,12 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 							themeMode={themeMode}
 							onToggleFont={toggleFontMode}
 							fontMode={fontMode}
-							onToggleMarkdownMode={toggleMarkdownMode}
-							markdownMode={markdownMode}
+							onToggleEditorWidth={handleToggleEditorWidth}
+							editorWidth={editorWidth}
+							onToggleEditorMode={handleToggleEditorMode}
+							editorMode={editorMode}
+							onTogglePreview={handleTogglePreview}
+							previewOpen={previewOpen}
 							onDownloadMarkdown={downloadSelectedNote}
 							onOpenProfile={() => {
 								void navigate({ to: "/profile" });

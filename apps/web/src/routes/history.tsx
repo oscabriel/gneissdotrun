@@ -14,6 +14,10 @@ interface HistoryEntry {
 	routeKind: string;
 	prompt: string;
 	actionSummary: string;
+	interactionType: string;
+	commandName: string | null;
+	commandArgument: string;
+	sourceNoteIds: string[];
 	versionId: string | null;
 	timestamp: number;
 	versionCreatedAt: number | null;
@@ -195,6 +199,7 @@ function HistoryRoute() {
 								<div key={entry.id} className="border-border bg-card space-y-2 border p-3">
 									<div className="flex flex-wrap items-center justify-between gap-2 text-xs">
 										<p className="text-muted-foreground uppercase">
+											{entry.interactionType.replaceAll("_", " ")} -{" "}
 											{entry.routeKind.replaceAll("_", " ")}
 										</p>
 										<p className="text-muted-foreground">
@@ -202,7 +207,20 @@ function HistoryRoute() {
 										</p>
 									</div>
 
+									{entry.commandName ? (
+										<p className="text-muted-foreground text-xs font-medium">
+											Slash command: /{entry.commandName}
+											{entry.commandArgument ? ` ${entry.commandArgument}` : ""}
+										</p>
+									) : null}
+
 									<p className="text-sm font-medium">{entry.actionSummary}</p>
+
+									{entry.sourceNoteIds.length > 0 ? (
+										<p className="text-muted-foreground text-xs">
+											Sources: {entry.sourceNoteIds.join(", ")}
+										</p>
+									) : null}
 
 									<div className="border-border bg-background border px-3 py-2 text-xs whitespace-pre-wrap">
 										{entry.prompt || "(No prompt recorded)"}

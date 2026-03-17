@@ -72,19 +72,20 @@ export interface IndexAgentState {
 }
 
 interface UseRewriteAgentOptions {
-	noteId: string;
+	agentName: string;
 	onStateUpdate?: (state: RewriteAgentState) => void;
 }
 
 interface UseRewriteAgentChatOptions extends UseRewriteAgentOptions {
+	body?: Record<string, unknown> | (() => Record<string, unknown>);
 	onRoutingData?: (payload: RewriteRoutingDataPart) => void;
 	onStatusData?: (payload: RewriteStatusDataPart) => void;
 }
 
-export function useRewriteAgent({ noteId, onStateUpdate }: UseRewriteAgentOptions) {
+export function useRewriteAgent({ agentName, onStateUpdate }: UseRewriteAgentOptions) {
 	return useAgent<RewriteAgentState>({
 		agent: agentNamespaces.rewrite,
-		name: noteId,
+		name: agentName,
 		host: agentClientConfig.host,
 		onStateUpdate,
 	});
@@ -96,7 +97,7 @@ export function useRewriteAgentChat(options: UseRewriteAgentChatOptions) {
 
 	useEffect(() => {
 		seenTransientEventsRef.current.clear();
-	}, [options.noteId]);
+	}, [options.agentName]);
 
 	const handleData = useCallback(
 		(chunk: unknown) => {
@@ -118,6 +119,7 @@ export function useRewriteAgentChat(options: UseRewriteAgentChatOptions) {
 	const chat = useAgentChat<RewriteAgentState>({
 		agent,
 		credentials: "include",
+		body: options.body,
 		onData: handleData,
 	});
 

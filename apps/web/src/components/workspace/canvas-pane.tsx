@@ -1,15 +1,18 @@
 import { Button } from "@cloudflare/kumo";
 
 import type { SidebarNote } from "@/components/sidebar/notes-sidebar";
+import type { EditorMode } from "@/lib/editor/editor-mode";
+import type { EditorWidth } from "@/lib/editor/editor-width";
 
 import { NoteEditor } from "@/components/note-editor";
 
 type NoteRunState = "idle" | "queued" | "streaming" | "persisting";
 
 interface CanvasPaneProps {
+	userId: string;
 	selectedNote: SidebarNote | null;
 	onCapture: (
-		input: { userInput: string; noteId?: string },
+		input: import("@gneissdotrun/api/capture-contract").CaptureRequest,
 		options?: {
 			onRewriteProgress?: (update: { mode: "append" | "replace"; text: string }) => void;
 		},
@@ -23,14 +26,19 @@ interface CanvasPaneProps {
 	isCapturing: boolean;
 	ephemeralContent: string | null;
 	onCanvasInput: () => void;
-	markdownMode: "edit" | "preview";
+	editorMode: EditorMode;
+	editorWidth: EditorWidth;
+	previewOpen: boolean;
 	editorFocusToken: number;
-	externalRunRequest?: { command: string; nonce: number } | null;
+	externalCommandRequest?: { command: string; nonce: number } | null;
 	rightSidebarCollapsed: boolean;
 	runStateByNoteId?: Record<string, NoteRunState>;
+	onNotify?: (notice: { tone: "info" | "success" | "warning" | "error"; message: string }) => void;
+	onRewritePersisted?: (noteId: string) => Promise<void> | void;
 }
 
 export function CanvasPane({
+	userId,
 	selectedNote,
 	onCapture,
 	onSaveNoteContent,
@@ -39,11 +47,15 @@ export function CanvasPane({
 	isCapturing,
 	ephemeralContent,
 	onCanvasInput,
-	markdownMode,
+	editorMode,
+	editorWidth,
+	previewOpen,
 	editorFocusToken,
-	externalRunRequest,
+	externalCommandRequest,
 	rightSidebarCollapsed,
 	runStateByNoteId = {},
+	onNotify,
+	onRewritePersisted,
 }: CanvasPaneProps) {
 	if (!selectedNote) {
 		return (
@@ -67,6 +79,7 @@ export function CanvasPane({
 
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				<NoteEditor
+					userId={userId}
 					noteId={selectedNote.id}
 					title={selectedNote.title}
 					initialContent={selectedNote.content}
@@ -76,10 +89,14 @@ export function CanvasPane({
 					onEditorInput={onCanvasInput}
 					isCapturing={isCapturing}
 					runStatus={runStateByNoteId[selectedNote.id] ?? "idle"}
-					externalRunRequest={externalRunRequest}
-					markdownMode={markdownMode}
+					externalCommandRequest={externalCommandRequest}
+					editorMode={editorMode}
+					editorWidth={editorWidth}
+					previewOpen={previewOpen}
 					focusToken={editorFocusToken}
 					rightSidebarCollapsed={rightSidebarCollapsed}
+					onNotify={onNotify}
+					onRewritePersisted={onRewritePersisted}
 				/>
 			</div>
 		</div>

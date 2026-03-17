@@ -137,7 +137,7 @@
 	}
 
 	.ProseMirror {
-		@apply min-h-40 break-words whitespace-pre-wrap font-serif text-[15px] leading-7;
+		@apply min-h-40 font-serif text-[15px] leading-7 break-words whitespace-pre-wrap;
 	}
 
 	.ProseMirror p {
@@ -172,20 +172,62 @@
 		@apply list-none pl-0;
 	}
 
+	.prose [data-task-list="true"] {
+		@apply my-3 list-none pl-0;
+	}
+
 	.ProseMirror ul[data-type="taskList"] li {
-		@apply my-1 flex items-start gap-2;
+		@apply my-1 grid items-start gap-x-3 pl-0;
+		grid-template-columns: 1rem minmax(0, 1fr);
+	}
+
+	.prose [data-task-list="true"] > [data-task-list-item="true"] {
+		@apply my-1 grid items-start gap-x-3 pl-0;
+		grid-template-columns: 1rem minmax(0, 1fr);
 	}
 
 	.ProseMirror ul[data-type="taskList"] li > label {
-		@apply mt-1;
+		@apply flex h-4 w-4 items-center justify-center self-start;
+		transform: translateY(0.2rem);
+		line-height: 1;
+	}
+
+	.ProseMirror ul[data-type="taskList"] li > label > span {
+		display: none;
+	}
+
+	.ProseMirror ul[data-type="taskList"] li > label input,
+	.prose [data-task-list-checkbox="true"] {
+		@apply border-kumo-line h-4 w-4 rounded-sm border bg-transparent;
+		accent-color: var(--color-kumo-strong);
+		margin: 0;
+	}
+
+	.prose [data-task-list-checkbox="true"] {
+		@apply self-start;
+		transform: translateY(0.2rem);
 	}
 
 	.ProseMirror ul[data-type="taskList"] li > div {
-		@apply flex-1;
+		@apply min-w-0 flex-1;
+	}
+
+	.prose [data-task-list-content="true"] {
+		@apply min-w-0 flex-1;
+	}
+
+	.ProseMirror ul[data-type="taskList"] li > div > :first-child,
+	.prose [data-task-list-content="true"] > :first-child {
+		margin-top: 0;
+	}
+
+	.ProseMirror ul[data-type="taskList"] li > div > :last-child,
+	.prose [data-task-list-content="true"] > :last-child {
+		margin-bottom: 0;
 	}
 
 	.ProseMirror blockquote {
-		@apply my-4 border-kumo-line text-kumo-strong border-l-2 pl-4;
+		@apply border-kumo-line text-kumo-strong my-4 border-l-2 pl-4;
 	}
 
 	.ProseMirror hr {
@@ -211,67 +253,21 @@
 		border-top-width: 2px;
 	}
 
-	.ProseMirror hr.pm-rollover-horizontal-rule {
-		position: relative;
-		height: auto;
-		min-height: 1.75rem;
-	}
-
-	.ProseMirror hr.pm-rollover-horizontal-rule::before {
-		content: attr(data-horizontal-rule-delimiter);
-		display: inline-block;
-		position: static;
-		border-top: 0;
-		transform: none;
-		padding-right: 0.125rem;
-		font-family: var(--font-mono);
-		line-height: 1.75rem;
-		color: var(--text-color-kumo-subtle);
-	}
-
-	.ProseMirror hr.pm-rollover-horizontal-rule::after {
-		content: "";
-		position: absolute;
-		top: 50%;
-		width: 1px;
-		height: 1.1rem;
-		background: var(--text-color-kumo-default);
-		transform: translateY(-50%);
-		animation: pm-caret-blink 1s steps(2, start) infinite;
-	}
-
-	.ProseMirror hr.pm-rollover-horizontal-rule[data-horizontal-rule-cursor="start"]::after {
-		left: 0;
-	}
-
-	.ProseMirror hr.pm-rollover-horizontal-rule[data-horizontal-rule-cursor="end"]::after,
-	.ProseMirror hr.pm-rollover-horizontal-rule[data-horizontal-rule-cursor="node"]::after {
-		left: calc(3ch + 0.125rem);
-	}
-
-	.ProseMirror hr.pm-rollover-horizontal-rule.ProseMirror-selectednode::before {
-		color: var(--color-kumo-brand);
-	}
-
-	.ProseMirror hr.pm-rollover-horizontal-rule.ProseMirror-selectednode::after {
-		background: var(--color-kumo-brand);
-	}
-
 	.ProseMirror a {
 		@apply text-kumo-link underline underline-offset-2;
 	}
 
 	.ProseMirror img {
-		@apply my-4 h-auto max-w-full rounded-md border border-kumo-line;
+		@apply border-kumo-line my-4 h-auto max-w-full rounded-md border;
 	}
 
 	.ProseMirror table {
-		@apply my-4 w-full border-collapse overflow-hidden rounded-md border border-kumo-line;
+		@apply border-kumo-line my-4 w-full border-collapse overflow-hidden rounded-md border;
 	}
 
 	.ProseMirror th,
 	.ProseMirror td {
-		@apply border border-kumo-line px-3 py-2 align-top;
+		@apply border-kumo-line border px-3 py-2 align-top;
 	}
 
 	.ProseMirror th {
@@ -279,11 +275,11 @@
 	}
 
 	.ProseMirror code {
-		@apply rounded border border-kumo-line bg-kumo-tint px-1.5 py-0.5 font-mono text-[13px] text-kumo-default;
+		@apply border-kumo-line bg-kumo-tint text-kumo-default rounded border px-1.5 py-0.5 font-mono text-[13px];
 	}
 
 	.ProseMirror pre {
-		@apply my-4 overflow-x-auto rounded-lg border border-kumo-line bg-kumo-tint p-4 font-mono text-[13px] leading-6;
+		@apply border-kumo-line bg-kumo-tint my-4 overflow-x-auto rounded-lg border p-4 font-mono text-[13px] leading-6;
 	}
 
 	.ProseMirror pre code {
@@ -291,51 +287,103 @@
 	}
 
 	.prose hr {
-		@apply my-6 border-kumo-line;
+		@apply border-kumo-line my-6;
 	}
 
-	.shiki-token {
+	.shiki {
+		@apply border-kumo-line my-4 overflow-x-auto rounded-lg border p-4 text-[13px] leading-6;
+	}
+
+	.shiki code {
+		font-family: var(--font-mono);
+	}
+
+	.shiki .line {
+		display: block;
+	}
+
+	[data-mode="dark"] .shiki {
+		background-color: var(--shiki-dark-bg) !important;
+		color: var(--shiki-dark) !important;
+	}
+
+	[data-mode="dark"] .shiki span {
+		color: var(--shiki-dark) !important;
+	}
+
+	.markdown-source-editor .cm-editor {
+		background: transparent;
+		min-height: 10rem;
+		outline: none;
+		box-shadow: none;
+		border: 0;
+	}
+
+	.markdown-source-editor .cm-focused {
+		outline: none;
+	}
+
+	.markdown-source-editor .cm-scroller {
+		font-family: var(--font-mono);
+		line-height: 1.65;
+		cursor: text;
+	}
+
+	.markdown-source-editor .cm-content,
+	.markdown-source-editor .cm-placeholder {
+		padding: 0;
+		cursor: text;
+	}
+
+	.markdown-source-editor .cm-placeholder {
+		color: var(--text-color-kumo-subtle);
+	}
+
+	.markdown-source-editor .cm-line {
+		padding: 0;
+		cursor: text;
+	}
+
+	.markdown-source-editor .cm-line.editor-slash-command-line,
+	.rich-text-editor .ProseMirror p.editor-slash-command-line {
+		position: relative;
+		display: block;
+		width: 100%;
+		margin: 0.625rem 0;
+		border: 1px solid color-mix(in srgb, var(--color-kumo-line) 72%, transparent);
+		border-radius: 0.9rem;
+		background: color-mix(in srgb, var(--color-kumo-tint) 28%, transparent);
+		padding: 1.55rem 0.95rem 0.8rem;
+		box-sizing: border-box;
+		font-family: var(--font-mono);
+		font-size: 0.95em;
+		line-height: 1.55;
+	}
+
+	.markdown-source-editor .cm-line.editor-slash-command-line[data-command-label]::before,
+	.rich-text-editor .ProseMirror p.editor-slash-command-line[data-command-label]::before {
+		content: attr(data-command-label) " command";
+		position: absolute;
+		top: 0.45rem;
+		left: 0.95rem;
+		font-size: 0.65rem;
+		font-family: var(--font-sans);
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--text-color-kumo-subtle);
+	}
+
+	.markdown-source-editor .cm-cursor,
+	.markdown-source-editor .cm-dropCursor {
+		border-left-color: var(--text-color-kumo-default);
+	}
+
+	.rich-text-editor .ProseMirror .shiki-token {
 		color: var(--shiki-light);
 	}
 
-	[data-mode="dark"] .shiki-token {
+	[data-mode="dark"] .rich-text-editor .ProseMirror .shiki-token {
 		color: var(--shiki-dark);
-	}
-
-	@keyframes pm-caret-blink {
-		0%,
-		49% {
-			opacity: 1;
-		}
-		50%,
-		100% {
-			opacity: 0;
-		}
-	}
-
-	.pm-rollover-code-fenced-block::before,
-	.pm-rollover-code-fenced-block::after {
-		display: block;
-		font-size: 12px;
-		line-height: 1.4;
-		opacity: 0.75;
-		color: var(--text-color-kumo-subtle);
-		user-select: none;
-		pointer-events: none;
-	}
-
-	.pm-rollover-code-fenced-block::before {
-		content: attr(data-fence-open);
-		margin-bottom: 0.25rem;
-	}
-
-	.pm-rollover-code-fenced-block::after {
-		content: attr(data-fence-close);
-		margin-top: 0.25rem;
-	}
-
-	.ProseMirror p.pm-rollover-code-source-block {
-		@apply my-4 overflow-x-auto rounded-lg border border-kumo-line bg-kumo-tint p-4 font-mono text-[13px] leading-6;
-		white-space: pre;
 	}
 }

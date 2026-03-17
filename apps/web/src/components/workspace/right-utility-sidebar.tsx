@@ -3,6 +3,7 @@ import type { ComponentType } from "react";
 import {
 	BookOpenText,
 	CircleUserRound,
+	Columns2,
 	Cog,
 	Download,
 	Eye,
@@ -20,13 +21,14 @@ import {
 } from "lucide-react";
 import { forwardRef, useImperativeHandle } from "react";
 
+import { getEditorModeActionLabel, type EditorMode } from "@/lib/editor/editor-mode";
+import { getEditorWidthActionLabel, type EditorWidth } from "@/lib/editor/editor-width";
 import { cn } from "@/lib/utils";
 
 export type UtilitySectionId = "review" | "controls" | "utility";
 
 type ThemeMode = "light" | "dark";
 type FontMode = "mono" | "serif";
-type MarkdownMode = "edit" | "preview";
 
 interface RightUtilitySidebarProps {
 	collapsed: boolean;
@@ -40,8 +42,12 @@ interface RightUtilitySidebarProps {
 	themeMode: ThemeMode;
 	onToggleFont: () => void;
 	fontMode: FontMode;
-	onToggleMarkdownMode: () => void;
-	markdownMode: MarkdownMode;
+	onToggleEditorWidth: () => void;
+	editorWidth: EditorWidth;
+	onToggleEditorMode: () => void;
+	editorMode: EditorMode;
+	onTogglePreview: () => void;
+	previewOpen: boolean;
 	onDownloadMarkdown: () => void;
 	onOpenProfile: () => void;
 	onOpenSettings: () => void;
@@ -97,8 +103,12 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 			themeMode,
 			onToggleFont,
 			fontMode,
-			onToggleMarkdownMode,
-			markdownMode,
+			onToggleEditorWidth,
+			editorWidth,
+			onToggleEditorMode,
+			editorMode,
+			onTogglePreview,
+			previewOpen,
 			onDownloadMarkdown,
 			onOpenProfile,
 			onOpenSettings,
@@ -212,10 +222,22 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 						onClick={onToggleFont}
 					/>
 					<RailButton
-						icon={markdownMode === "edit" ? Eye : Pencil}
-						label={markdownMode === "edit" ? "Render markdown" : "Edit markdown"}
+						icon={Columns2}
+						label={getEditorWidthActionLabel(editorWidth)}
 						collapsed={collapsed}
-						onClick={onToggleMarkdownMode}
+						onClick={onToggleEditorWidth}
+					/>
+					<RailButton
+						icon={editorMode === "source" ? Type : Pencil}
+						label={getEditorModeActionLabel(editorMode)}
+						collapsed={collapsed}
+						onClick={onToggleEditorMode}
+					/>
+					<RailButton
+						icon={previewOpen ? Pencil : Eye}
+						label={previewOpen ? "Close preview" : "Open preview"}
+						collapsed={collapsed}
+						onClick={onTogglePreview}
 					/>
 					<RailButton
 						icon={Download}

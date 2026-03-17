@@ -13,6 +13,7 @@ export const agentNamespaces = {
 	router: "router-agent",
 } as const;
 
-export function createNoteSessionId(): string {
-	return `note-${crypto.randomUUID()}`;
+export function createNoteSessionId(noteId?: string): string {
+	const prefix = noteId ? `note-${noteId}` : "note";
+	return `${prefix}-${crypto.randomUUID()}`;
 }

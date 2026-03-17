@@ -1,22 +1,62 @@
 import { Button, DropdownMenu } from "@cloudflare/kumo";
+import type { CaptureRequest } from "@gneissdotrun/api/capture-contract";
+import {
+	parseSlashCommandLine,
+	parseSlashCommands,
+	stripSlashCommandLines,
+	type SlashCommandIntent,
+} from "@gneissdotrun/api/slash-commands";
+import type { UIMessage } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
-import remarkGfm from "remark-gfm";
 
-import { PmMarkdownEditor } from "@/components/pm-markdown-editor";
+import { NoteContentEditor, type NoteContentEditorHandle } from "@/components/note-content-editor";
+import { createNoteSessionId } from "@/lib/agents/client";
+import { useRewriteAgentChat } from "@/lib/agents/hooks";
+import type { EditorMode } from "@/lib/editor/editor-mode";
+import type { EditorWidth } from "@/lib/editor/editor-width";
+import { cn } from "@/lib/utils";
 
 interface RewriteProgressUpdate {
 	mode: "append" | "replace";
 	text: string;
 }
 
+type NoteRunStatus = "idle" | "queued" | "streaming" | "persisting";
+
+interface RewriteAgentBody {
+	invocationSource: "note_run";
+	interactionType: "slash_command";
+	noteId: string;
+	userId: string;
+	title: string;
+	noteContent: string;
+	pendingCommand: SlashCommandIntent;
+}
+
+interface ActiveSlashRun {
+	sessionId: string;
+	noteContent: string;
+	title: string;
+	command: SlashCommandIntent;
+}
+
+interface SlashRewriteRunnerProps {
+	noteId: string;
+	userId: string;
+	run: ActiveSlashRun;
+	onStarted: () => void;
+	onProgress: (nextMarkdown: string) => void;
+	onCompleted: (result: { status: "persisted" | "skipped"; finalText: string }) => void;
+	onFailed: () => void;
+}
+
 interface NoteEditorProps {
+	userId: string;
 	noteId: string;
 	title: string;
 	initialContent: string;
 	onCapture: (
-		input: { userInput: string; noteId?: string },
+		input: CaptureRequest,
 		options?: {
 			onRewriteProgress?: (update: RewriteProgressUpdate) => void;
 		},
@@ -28,27 +68,18 @@ interface NoteEditorProps {
 	onArchiveNote: (noteId: string) => Promise<void>;
 	onEditorInput: () => void;
 	isCapturing: boolean;
-	runStatus?: "idle" | "queued" | "streaming" | "persisting";
-	externalRunRequest?: { command: string; nonce: number } | null;
-	markdownMode?: "edit" | "preview";
+	runStatus?: NoteRunStatus;
+	externalCommandRequest?: { command: string; nonce: number } | null;
+	editorMode?: EditorMode;
+	editorWidth?: EditorWidth;
+	previewOpen?: boolean;
 	focusToken?: number;
 	rightSidebarCollapsed?: boolean;
+	onNotify?: (notice: { tone: "info" | "success" | "warning" | "error"; message: string }) => void;
+	onRewritePersisted?: (noteId: string) => Promise<void> | void;
 }
 
-type SlashInstructionKind = "none" | "editor" | "agent" | "freeform";
-
-interface SlashInstruction {
-	kind: SlashInstructionKind;
-	commandName: string | null;
-	argument: string;
-	raw: string;
-}
-
-const SLASH_COMMAND_LINE_PATTERN = /^\s*\/[a-z-]+(?:\s+.*)?\s*$/i;
 const AUTOSAVE_DELAY_MS = 1000;
-
-const EDITOR_FORMATTING_COMMANDS = new Set(["heading", "code", "quote", "bullets"]);
-const AGENT_COMMANDS = new Set(["ask", "research", "link", "summarize"]);
 
 function normalizeDraftContent(input: string): string {
 	return stripSlashCommandLines(input).trimEnd();
@@ -56,69 +87,6 @@ function normalizeDraftContent(input: string): string {
 
 function normalizeDraftTitle(input: string): string {
 	return input.trim() || "Untitled note";
-}
-
-function extractSlashCommandLines(input: string): string[] {
-	return input
-		.split("\n")
-		.map((line) => line.trim())
-		.filter((line) => SLASH_COMMAND_LINE_PATTERN.test(line));
-}
-
-function stripSlashCommandLines(input: string): string {
-	const lines = input.split("\n");
-	const filtered = lines.filter((line) => !SLASH_COMMAND_LINE_PATTERN.test(line.trim()));
-	return filtered.join("\n").trimEnd();
-}
-
-function classifySlashInstruction(rawInput: string): SlashInstruction {
-	const raw = rawInput.trim();
-	if (!raw.startsWith("/")) {
-		return {
-			kind: "none",
-			commandName: null,
-			argument: raw,
-			raw,
-		};
-	}
-
-	const match = raw.match(/^\/([a-z-]+)\s*(.*)$/i);
-	if (!match) {
-		return {
-			kind: "freeform",
-			commandName: null,
-			argument: "",
-			raw,
-		};
-	}
-
-	const commandName = (match[1] ?? "").toLowerCase();
-	const argument = (match[2] ?? "").trim();
-
-	if (EDITOR_FORMATTING_COMMANDS.has(commandName)) {
-		return {
-			kind: "editor",
-			commandName,
-			argument,
-			raw,
-		};
-	}
-
-	if (AGENT_COMMANDS.has(commandName)) {
-		return {
-			kind: "agent",
-			commandName,
-			argument,
-			raw,
-		};
-	}
-
-	return {
-		kind: "freeform",
-		commandName,
-		argument,
-		raw,
-	};
 }
 
 function appendBlock(current: string, block: string): string {
@@ -158,7 +126,114 @@ function applyEditorFormatting(current: string, commandName: string, argument: s
 	}
 }
 
+function appendPendingCommand(current: string, rawCommand: string): string {
+	const nextCommand = rawCommand.trim();
+	if (!nextCommand) {
+		return current;
+	}
+
+	if (!current.trim()) {
+		return nextCommand;
+	}
+
+	return `${current.trimEnd()}\n\n${nextCommand}`;
+}
+
+function extractTextFromMessage(message: UIMessage): string {
+	return message.parts
+		.filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+		.map((part) => part.text)
+		.join("")
+		.trim();
+}
+
+function getLatestAssistantText(messages: UIMessage[]): string {
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index];
+		if (!message || message.role !== "assistant") {
+			continue;
+		}
+
+		const text = extractTextFromMessage(message);
+		if (text.length > 0) {
+			return text;
+		}
+	}
+
+	return "";
+}
+
+function SlashRewriteRunner({
+	noteId,
+	userId,
+	run,
+	onStarted,
+	onProgress,
+	onCompleted,
+	onFailed,
+}: SlashRewriteRunnerProps) {
+	const startedRef = useRef(false);
+	const completedRef = useRef(false);
+	const messagesRef = useRef<UIMessage[]>([]);
+	const bodyRef = useRef<RewriteAgentBody>({
+		invocationSource: "note_run",
+		interactionType: "slash_command",
+		noteId,
+		userId,
+		title: run.title,
+		noteContent: run.noteContent,
+		pendingCommand: run.command,
+	});
+
+	const { clearHistory, messages, sendMessage } = useRewriteAgentChat({
+		agentName: `${noteId}:${run.sessionId}`,
+		body: () => ({ ...bodyRef.current }),
+		onStatusData: (payload) => {
+			if (payload.status === "started") {
+				onStarted();
+				return;
+			}
+
+			if (completedRef.current) {
+				return;
+			}
+
+			completedRef.current = true;
+			onCompleted({
+				status: payload.status,
+				finalText: getLatestAssistantText(messagesRef.current),
+			});
+		},
+	});
+
+	useEffect(() => {
+		messagesRef.current = messages;
+		const latestAssistantText = getLatestAssistantText(messages);
+		if (latestAssistantText) {
+			onProgress(latestAssistantText);
+		}
+	}, [messages, onProgress]);
+
+	useEffect(() => {
+		if (startedRef.current) {
+			return;
+		}
+
+		startedRef.current = true;
+
+		try {
+			clearHistory();
+			sendMessage({ text: run.command.raw });
+		} catch {
+			onFailed();
+		}
+	}, [clearHistory, onFailed, run.command.raw, sendMessage]);
+
+	return null;
+}
+
 export function NoteEditor({
+	userId,
 	noteId,
 	title,
 	initialContent,
@@ -169,16 +244,22 @@ export function NoteEditor({
 	// retained for compatibility with parent capture-level controls
 	isCapturing: _isCapturing,
 	runStatus = "idle",
-	externalRunRequest,
-	markdownMode = "edit",
+	externalCommandRequest,
+	editorMode = "source",
+	editorWidth = "full",
+	previewOpen = false,
 	focusToken,
 	rightSidebarCollapsed = false,
+	onNotify,
+	onRewritePersisted,
 }: NoteEditorProps) {
 	const sanitizedInitialContent = normalizeDraftContent(initialContent);
 	const normalizedInitialTitle = normalizeDraftTitle(title);
 
 	const [noteTitle, setNoteTitle] = useState(normalizedInitialTitle);
 	const [noteContent, setNoteContent] = useState(sanitizedInitialContent);
+	const [activeSlashRun, setActiveSlashRun] = useState<ActiveSlashRun | null>(null);
+	const [slashRunStatus, setSlashRunStatus] = useState<Exclude<NoteRunStatus, "idle"> | null>(null);
 
 	const noteContentRef = useRef(sanitizedInitialContent);
 	const titleRef = useRef(normalizedInitialTitle);
@@ -187,6 +268,54 @@ export function NoteEditor({
 	const syncedNoteIdRef = useRef(noteId);
 	const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const saveInFlightRef = useRef<Promise<boolean> | null>(null);
+	const editorRef = useRef<NoteContentEditorHandle | null>(null);
+
+	const effectiveRunStatus = slashRunStatus ?? runStatus;
+
+	const handleSlashRewriteStarted = useCallback(() => {
+		setSlashRunStatus("streaming");
+	}, []);
+
+	const handleSlashRewriteProgress = useCallback((nextMarkdown: string) => {
+		const sanitized = stripSlashCommandLines(nextMarkdown).trim();
+		setNoteContent(sanitized);
+		noteContentRef.current = sanitized;
+	}, []);
+
+	const handleSlashRewriteCompleted = useCallback(
+		async (result: { status: "persisted" | "skipped"; finalText: string }) => {
+			setSlashRunStatus("persisting");
+			try {
+				const fallbackContent = activeSlashRun?.noteContent ?? noteContentRef.current;
+				const finalContent = stripSlashCommandLines(result.finalText || fallbackContent).trim();
+				setNoteContent(finalContent);
+				noteContentRef.current = finalContent;
+				lastAcknowledgedContentRef.current = finalContent;
+
+				if (result.status === "skipped") {
+					onNotify?.({
+						tone: "warning",
+						message: "Slash command completed without a persisted rewrite.",
+					});
+				}
+
+				await onRewritePersisted?.(noteId);
+			} finally {
+				setActiveSlashRun(null);
+				setSlashRunStatus(null);
+			}
+		},
+		[activeSlashRun, noteId, onNotify, onRewritePersisted],
+	);
+
+	const handleSlashRewriteFailed = useCallback(() => {
+		setActiveSlashRun(null);
+		setSlashRunStatus(null);
+		onNotify?.({
+			tone: "error",
+			message: "Failed to start slash command rewrite.",
+		});
+	}, [onNotify]);
 
 	const clearAutosaveTimer = useCallback(() => {
 		if (!autosaveTimerRef.current) {
@@ -245,92 +374,95 @@ export function NoteEditor({
 		[noteId, onSaveNoteContent],
 	);
 
-	const runCommandIntent = useCallback(
-		async (source: "explicit" | "close", forcedCommand?: string) => {
-			const pendingCommands = forcedCommand
-				? [forcedCommand]
-				: extractSlashCommandLines(noteContentRef.current);
-			const baselineContent = stripSlashCommandLines(noteContentRef.current);
-			let transformedContent = baselineContent;
-			const captureCommands: string[] = [];
+	const runCommandIntent = useCallback(async () => {
+		const pendingCommands = parseSlashCommands(noteContentRef.current);
+		const agentCommands = pendingCommands.filter((command) => command.kind !== "editor");
 
-			for (const commandLine of pendingCommands) {
-				const instruction = classifySlashInstruction(commandLine);
-				if (instruction.kind === "editor" && instruction.commandName) {
-					transformedContent = applyEditorFormatting(
-						transformedContent,
-						instruction.commandName,
-						instruction.argument,
-					);
-					continue;
-				}
+		if (agentCommands.length > 1) {
+			onNotify?.({
+				tone: "warning",
+				message: "Run supports only one agent slash command at a time.",
+			});
+			return;
+		}
 
-				captureCommands.push(instruction.raw);
+		const baselineContent = stripSlashCommandLines(noteContentRef.current);
+		let transformedContent = baselineContent;
+
+		for (const command of pendingCommands) {
+			if (command.kind === "editor" && command.commandName) {
+				transformedContent = applyEditorFormatting(
+					transformedContent,
+					command.commandName,
+					command.argument,
+				);
 			}
+		}
 
-			if (transformedContent !== baselineContent) {
+		if (transformedContent !== noteContentRef.current) {
+			setNoteContent(transformedContent);
+			noteContentRef.current = transformedContent;
+		}
+
+		await flushSave({
+			silent: false,
+			content: transformedContent,
+		});
+
+		const slashCommand = agentCommands[0] ?? null;
+		if (slashCommand) {
+			const sessionId = createNoteSessionId(noteId);
+			setActiveSlashRun({
+				sessionId,
+				noteContent: transformedContent,
+				title: titleRef.current,
+				command: slashCommand,
+			});
+			setSlashRunStatus("queued");
+			return;
+		}
+
+		const userInput = transformedContent.trim();
+
+		if (userInput.length === 0) {
+			return;
+		}
+
+		let streamedContent = "";
+		let sawStreamingUpdate = false;
+
+		try {
+			await onCapture(
+				{
+					noteId,
+					userInput,
+					invocationSource: "note_run",
+					runMode: pendingCommands.length > 0 ? "content_and_slash" : "content_only",
+				},
+				{
+					onRewriteProgress: (update) => {
+						sawStreamingUpdate = true;
+						streamedContent =
+							update.mode === "replace" ? update.text : `${streamedContent}${update.text}`;
+						const sanitized = stripSlashCommandLines(streamedContent).trim();
+						setNoteContent(sanitized);
+						noteContentRef.current = sanitized;
+					},
+				},
+			);
+			lastAcknowledgedContentRef.current = normalizeDraftContent(noteContentRef.current);
+		} catch {
+			if (sawStreamingUpdate) {
 				setNoteContent(transformedContent);
 				noteContentRef.current = transformedContent;
 			}
 
 			await flushSave({
-				silent: source === "close",
+				silent: false,
 				content: transformedContent,
 			});
-
-			const shouldRunCapture = source === "explicit" || captureCommands.length > 0;
-			if (!shouldRunCapture) {
-				return;
-			}
-
-			let userInput = captureCommands.join("\n").trim();
-			if (userInput.length === 0 && source === "explicit") {
-				userInput = transformedContent.trim();
-			}
-
-			if (userInput.length === 0) {
-				if (source === "explicit") {
-					await flushSave({ silent: false });
-				}
-				return;
-			}
-
-			let streamedContent = "";
-			let sawStreamingUpdate = false;
-
-			try {
-				await onCapture(
-					{
-						noteId,
-						userInput,
-					},
-					{
-						onRewriteProgress: (update) => {
-							sawStreamingUpdate = true;
-							streamedContent =
-								update.mode === "replace" ? update.text : `${streamedContent}${update.text}`;
-							const sanitized = stripSlashCommandLines(streamedContent).trim();
-							setNoteContent(sanitized);
-							noteContentRef.current = sanitized;
-						},
-					},
-				);
-			} catch {
-				if (sawStreamingUpdate) {
-					setNoteContent(transformedContent);
-					noteContentRef.current = transformedContent;
-				}
-
-				if (source === "explicit") {
-					await flushSave({
-						silent: false,
-						content: transformedContent,
-					});
-				}
-			}
-		},
-		[flushSave, noteId, onCapture],
-	);
+		}
+	}, [flushSave, noteId, onCapture, onNotify, userId]);
 
 	useEffect(() => {
 		const sanitized = normalizeDraftContent(initialContent);
@@ -344,6 +476,9 @@ export function NoteEditor({
 			if (hasUnsavedLocalChanges || saveInFlightRef.current) {
 				return;
 			}
+		} else {
+			setActiveSlashRun(null);
+			setSlashRunStatus(null);
 		}
 
 		syncedNoteIdRef.current = noteId;
@@ -372,33 +507,35 @@ export function NoteEditor({
 	}, [clearAutosaveTimer, flushSave, noteContent, noteTitle]);
 
 	useEffect(() => {
-		if (!externalRunRequest?.command) {
+		if (!externalCommandRequest?.command) {
 			return;
 		}
 
-		void runCommandIntent("explicit", externalRunRequest.command);
-	}, [externalRunRequest?.nonce, externalRunRequest?.command, runCommandIntent]);
+		const parsed = parseSlashCommandLine(externalCommandRequest.command);
+		if (!parsed) {
+			return;
+		}
+
+		onEditorInput();
+		const nextContent = appendPendingCommand(noteContentRef.current, parsed.raw);
+		setNoteContent(nextContent);
+		noteContentRef.current = nextContent;
+	}, [externalCommandRequest?.nonce, externalCommandRequest?.command, onEditorInput]);
 
 	useEffect(() => {
 		if (focusToken === undefined) {
 			return;
 		}
 
-		const target = document.querySelector<HTMLElement>("[contenteditable='true']");
-		target?.focus();
+		editorRef.current?.focus();
 	}, [focusToken]);
 
 	useEffect(() => {
 		return () => {
 			clearAutosaveTimer();
-			if (extractSlashCommandLines(noteContentRef.current).length > 0) {
-				void runCommandIntent("close");
-				return;
-			}
-
 			void flushSave({ silent: true });
 		};
-	}, [clearAutosaveTimer, flushSave, runCommandIntent]);
+	}, [clearAutosaveTimer, flushSave]);
 
 	const handleRename = async () => {
 		const nextTitle = window.prompt("Rename note", titleRef.current);
@@ -440,14 +577,27 @@ export function NoteEditor({
 
 	return (
 		<div className="relative">
+			{activeSlashRun ? (
+				<SlashRewriteRunner
+					noteId={noteId}
+					userId={userId}
+					run={activeSlashRun}
+					onStarted={handleSlashRewriteStarted}
+					onProgress={handleSlashRewriteProgress}
+					onCompleted={(result) => {
+						void handleSlashRewriteCompleted(result);
+					}}
+					onFailed={handleSlashRewriteFailed}
+				/>
+			) : null}
 			<div className="absolute top-0 right-0 z-10 flex items-center gap-1">
 				<Button
 					size="sm"
 					variant="outline"
-					disabled={runStatus !== "idle"}
+					disabled={effectiveRunStatus !== "idle"}
 					onClick={() => {
 						onEditorInput();
-						void runCommandIntent("explicit");
+						void runCommandIntent();
 					}}
 				>
 					Run
@@ -461,7 +611,7 @@ export function NoteEditor({
 								shape="square"
 								className="text-2xl leading-none"
 								aria-label="Note options"
-								disabled={runStatus !== "idle"}
+								disabled={effectiveRunStatus !== "idle"}
 							/>
 						}
 					>
@@ -489,49 +639,45 @@ export function NoteEditor({
 						</DropdownMenu.Group>
 					</DropdownMenu.Content>
 				</DropdownMenu>
-				{runStatus !== "idle" ? (
+				{effectiveRunStatus !== "idle" ? (
 					<span
 						className="text-kumo-subtle inline-flex items-center gap-1 text-xs"
 						aria-live="polite"
 					>
 						<span className="bg-kumo-subtle inline-block h-1.5 w-1.5 animate-pulse rounded-full" />
-						{runStatus === "queued"
+						{effectiveRunStatus === "queued"
 							? "Running…"
-							: runStatus === "streaming"
+							: effectiveRunStatus === "streaming"
 								? "Streaming…"
 								: "Saving…"}
 					</span>
 				) : null}
 			</div>
 
-			{markdownMode === "edit" ? (
-				<PmMarkdownEditor
-					label="Note content"
-					value={noteContent}
-					autoFocus
-					className="min-h-40 pr-28"
-					onChangeMarkdown={(nextMarkdown) => {
-						onEditorInput();
-						setNoteContent(nextMarkdown);
-						noteContentRef.current = nextMarkdown;
-					}}
-					onBlur={() => {
-						void flushSave({ silent: true });
-					}}
-					onRunShortcut={() => {
-						void runCommandIntent("explicit");
-					}}
-					placeholder="Write your note. Add slash commands like /summarize on separate lines."
-				/>
-			) : (
-				<div className="bg-kumo-base min-h-40 rounded-md p-4 pr-28">
-					<article className="prose prose-neutral text-kumo-default max-w-none">
-						<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
-							{noteContent.trim().length > 0 ? noteContent : "_Nothing to preview yet._"}
-						</ReactMarkdown>
-					</article>
-				</div>
-			)}
+			<NoteContentEditor
+				ref={editorRef}
+				label="Note content"
+				value={noteContent}
+				editorMode={editorMode}
+				previewOpen={previewOpen}
+				autoFocus
+				className={cn(
+					"min-h-40 w-full pr-28",
+					editorWidth === "narrow" ? "mx-auto max-w-3xl" : undefined,
+				)}
+				onChangeMarkdown={(nextMarkdown) => {
+					onEditorInput();
+					setNoteContent(nextMarkdown);
+					noteContentRef.current = nextMarkdown;
+				}}
+				onBlur={() => {
+					void flushSave({ silent: true });
+				}}
+				onRunShortcut={() => {
+					void runCommandIntent();
+				}}
+				placeholder="Write your note. Add slash commands like /summarize on separate lines."
+			/>
 		</div>
 	);
 }
