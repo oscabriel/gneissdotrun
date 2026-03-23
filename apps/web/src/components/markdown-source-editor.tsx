@@ -73,9 +73,7 @@ function buildSlashCommandDecorations(view: EditorView): DecorationSet {
 				attributes: {
 					class: getSlashCommandClassName(presentation.kind),
 					"data-command-kind": presentation.kind,
-					...(presentation.isKnown
-						? { "data-command-label": presentation.label }
-						: {}),
+					...(presentation.isKnown ? { "data-command-label": presentation.label } : {}),
 				},
 			}),
 		);

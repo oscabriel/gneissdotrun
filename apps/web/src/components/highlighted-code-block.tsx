@@ -8,11 +8,7 @@ interface HighlightedCodeBlockProps {
 	className?: string;
 }
 
-export function HighlightedCodeBlock({
-	code,
-	language,
-	className,
-}: HighlightedCodeBlockProps) {
+export function HighlightedCodeBlock({ code, language, className }: HighlightedCodeBlockProps) {
 	const [html, setHtml] = useState<string | null>(null);
 
 	useEffect(() => {
