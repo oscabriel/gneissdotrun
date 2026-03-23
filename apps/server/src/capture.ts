@@ -669,6 +669,7 @@ async function notifyIndexUpsert(env: Env, userId: string, note: UserNote): Prom
 				id: note.id,
 				title: note.title,
 				summary: note.summary,
+				tags: note.tags,
 				updatedAt: note.updatedAt,
 			},
 		}),

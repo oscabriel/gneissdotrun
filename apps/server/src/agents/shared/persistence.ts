@@ -113,6 +113,7 @@ export async function persistNoteAndNotify(
 		id: input.noteId,
 		title: trimmedTitle,
 		summary,
+		tags,
 		updatedAt: now,
 	};
 }

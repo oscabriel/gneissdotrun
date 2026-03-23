@@ -25,6 +25,7 @@ interface AutoRewriteNote {
 	id: string;
 	title: string;
 	content: string;
+	tags: string[];
 	updatedAt: number;
 }
 
@@ -42,6 +43,7 @@ interface AutoRewriteDependencies {
 		noteId: string;
 		title: string;
 		summary: string;
+		tags: string[];
 		updatedAt: number;
 	}) => Promise<void>;
 	triggerOrganization?: typeof triggerOrganizationRefresh;
@@ -98,13 +100,14 @@ function enforceExistingWikiLinks(
 
 async function loadNote(env: Env, userId: string, noteId: string): Promise<AutoRewriteNote | null> {
 	const row = await env.DB.prepare(
-		"SELECT id, title, content, updated_at FROM notes WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL",
+		"SELECT id, title, content, tags, updated_at FROM notes WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL",
 	)
 		.bind(noteId, userId)
 		.first<{
 			id: string;
 			title: string;
 			content: string;
+			tags: string;
 			updated_at: number;
 		}>();
 
@@ -112,10 +115,18 @@ async function loadNote(env: Env, userId: string, noteId: string): Promise<AutoR
 		return null;
 	}
 
+	let tags: string[] = [];
+	try {
+		tags = JSON.parse(row.tags) as string[];
+	} catch {
+		tags = [];
+	}
+
 	return {
 		id: row.id,
 		title: row.title,
 		content: row.content,
+		tags,
 		updatedAt: row.updated_at,
 	};
 }
@@ -140,6 +151,7 @@ async function defaultNotifyIndexUpsert(input: {
 	noteId: string;
 	title: string;
 	summary: string;
+	tags: string[];
 	updatedAt: number;
 }): Promise<void> {
 	const indexAgent = await getAgentByName<Env, IndexAgent>(input.env.INDEX_AGENT, input.userId);
@@ -154,6 +166,7 @@ async function defaultNotifyIndexUpsert(input: {
 				id: input.noteId,
 				title: input.title,
 				summary: input.summary,
+				tags: input.tags,
 				updatedAt: input.updatedAt,
 			},
 		}),
@@ -246,6 +259,7 @@ export async function runAutoRewriteForNote(
 			noteId: input.noteId,
 			title: persisted.title,
 			summary,
+			tags: persisted.tags,
 			updatedAt,
 		});
 	} catch (error) {

@@ -30,6 +30,7 @@ export interface IndexedNote {
 	id: string;
 	title: string;
 	summary: string;
+	tags: string[];
 	updatedAt: number;
 }
 

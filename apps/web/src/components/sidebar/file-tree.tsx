@@ -1,4 +1,4 @@
-import { ChevronRight, FileText } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type { KeyboardEventHandler, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -12,7 +12,7 @@ interface FileTreeProps {
 export function FileTree({ children, label, onKeyDown }: FileTreeProps) {
 	return (
 		<div
-			className="flex-1 overflow-y-auto overscroll-contain"
+			className="flex-1 overflow-y-auto overscroll-contain pr-1"
 			role="tree"
 			tabIndex={0}
 			onKeyDown={onKeyDown}
@@ -23,20 +23,36 @@ export function FileTree({ children, label, onKeyDown }: FileTreeProps) {
 	);
 }
 
+function TreeIndentGuides({ depth }: { depth: number }) {
+	if (depth <= 0) {
+		return null;
+	}
+
+	return (
+		<span aria-hidden className="flex h-full shrink-0 items-stretch">
+			{Array.from({ length: depth }).map((_, index) => (
+				<span key={`${depth}-${index}`} className="flex w-4 justify-center">
+					<span className="bg-kumo-line/70 h-full w-px" />
+				</span>
+			))}
+		</span>
+	);
+}
+
 interface FileTreeFolderProps {
 	name: string;
-	count?: number;
 	expanded: boolean;
 	active: boolean;
+	selected?: boolean;
 	depth: number;
 	onClick: () => void;
 }
 
 export function FileTreeFolder({
 	name,
-	count,
 	expanded,
 	active,
+	selected = false,
 	depth,
 	onClick,
 }: FileTreeFolderProps) {
@@ -46,45 +62,36 @@ export function FileTreeFolder({
 			role="treeitem"
 			aria-expanded={expanded}
 			className={cn(
-				"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
-				"hover:bg-kumo-tint",
-				active && "ring-kumo-line ring-1",
+				"text-kumo-strong flex min-h-8 w-full items-stretch text-left text-sm transition-colors",
+				selected ? "bg-kumo-tint/80" : "hover:bg-kumo-tint/60",
+				active && !selected && "bg-kumo-tint/40",
 			)}
-			style={{ paddingLeft: `${depth * 12 + 8}px` }}
 			onClick={onClick}
 		>
-			<ChevronRight
-				className={cn(
-					"text-kumo-subtle size-3 shrink-0 transition-transform duration-200",
-					expanded ? "rotate-90" : "rotate-0",
-				)}
-				aria-hidden
-			/>
-			<span className="text-kumo-default truncate text-sm font-medium">{name}</span>
-			{count !== undefined ? (
-				<span className="text-kumo-subtle ml-auto shrink-0 text-[11px]">{count}</span>
-			) : null}
+			<TreeIndentGuides depth={depth} />
+			<span className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5">
+				<ChevronRight
+					className={cn(
+						"text-kumo-subtle mt-px size-3 shrink-0 transition-transform duration-200",
+						expanded ? "rotate-90" : "rotate-0",
+					)}
+					aria-hidden
+				/>
+				<span className="truncate font-medium">{name}</span>
+			</span>
 		</button>
 	);
 }
 
 interface FileTreeItemProps {
 	name: string;
-	subtitle?: string;
 	selected: boolean;
 	active: boolean;
 	depth: number;
 	onClick: () => void;
 }
 
-export function FileTreeItem({
-	name,
-	subtitle,
-	selected,
-	active,
-	depth,
-	onClick,
-}: FileTreeItemProps) {
+export function FileTreeItem({ name, selected, active, depth, onClick }: FileTreeItemProps) {
 	return (
 		<button
 			type="button"
@@ -92,17 +99,17 @@ export function FileTreeItem({
 			aria-selected={selected}
 			aria-current={selected ? "true" : undefined}
 			className={cn(
-				"flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left",
-				selected ? "bg-kumo-tint ring-kumo-line ring-1" : "hover:bg-kumo-tint",
-				active && !selected && "ring-kumo-line ring-1",
+				"flex min-h-8 w-full items-stretch text-left text-sm transition-colors",
+				selected
+					? "bg-kumo-tint/80 text-kumo-default"
+					: "text-kumo-subtle hover:bg-kumo-tint/60 hover:text-kumo-default",
+				active && !selected && "bg-kumo-tint/40 text-kumo-default",
 			)}
-			style={{ paddingLeft: `${depth * 12 + 8}px` }}
 			onClick={onClick}
 		>
-			<FileText className="text-kumo-subtle mt-0.5 size-3 shrink-0" aria-hidden />
-			<span className="min-w-0 flex-1">
-				<p className="text-kumo-default truncate text-sm">{name}</p>
-				{subtitle ? <p className="text-kumo-subtle mt-0.5 text-[11px]">{subtitle}</p> : null}
+			<TreeIndentGuides depth={depth} />
+			<span className="min-w-0 flex-1 px-2 py-1.5">
+				<p className="truncate">{name}</p>
 			</span>
 		</button>
 	);

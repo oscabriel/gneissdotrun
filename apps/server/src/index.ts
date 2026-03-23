@@ -541,6 +541,7 @@ app.post("/api/notes/:noteId/revert", noteIdParamValidator, revertNoteValidator,
 					id: noteId,
 					title,
 					summary,
+					tags: version.tags,
 					updatedAt: now,
 				},
 			}),
@@ -694,6 +695,7 @@ app.post("/api/notes", createNoteValidator, async (c) => {
 					id: noteId,
 					title,
 					summary: "",
+					tags: input.tags,
 					updatedAt: now,
 				},
 			}),
@@ -780,6 +782,7 @@ app.put("/api/notes/:noteId", noteIdParamValidator, updateNoteValidator, async (
 					id: noteId,
 					title,
 					summary,
+					tags,
 					updatedAt: now,
 				},
 			}),
@@ -857,13 +860,20 @@ app.post("/api/notes/:noteId/restore", noteIdParamValidator, async (c) => {
 
 	const { noteId } = c.req.valid("param");
 	const existing = await c.env.DB.prepare(
-		"SELECT id, title, summary, updated_at FROM notes WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NOT NULL",
+		"SELECT id, title, summary, tags, updated_at FROM notes WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NOT NULL",
 	)
 		.bind(noteId, user.id)
-		.first<{ id: string; title: string; summary: string; updated_at: number }>();
+		.first<{ id: string; title: string; summary: string; tags: string; updated_at: number }>();
 
 	if (!existing) {
 		return c.json({ error: "Archived note not found" }, 404);
+	}
+
+	let tags: string[] = [];
+	try {
+		tags = JSON.parse(existing.tags) as string[];
+	} catch {
+		tags = [];
 	}
 
 	const now = Date.now();
@@ -886,6 +896,7 @@ app.post("/api/notes/:noteId/restore", noteIdParamValidator, async (c) => {
 					id: noteId,
 					title: existing.title,
 					summary: existing.summary,
+					tags,
 					updatedAt: now,
 				},
 			}),
@@ -899,6 +910,7 @@ app.post("/api/notes/:noteId/restore", noteIdParamValidator, async (c) => {
 			id: noteId,
 			title: existing.title,
 			summary: existing.summary,
+			tags,
 			updatedAt: now,
 		},
 	});

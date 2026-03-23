@@ -8,6 +8,7 @@ export interface SidebarNote {
 	title: string;
 	summary: string;
 	content: string;
+	tags: string[];
 	updatedAt: number;
 }
 

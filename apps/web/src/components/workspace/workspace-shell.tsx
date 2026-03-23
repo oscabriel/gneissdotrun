@@ -32,6 +32,7 @@ interface NotesResponse {
 		title: string;
 		content: string;
 		summary: string;
+		tags: string[];
 		updatedAt: number;
 	}>;
 }
@@ -222,6 +223,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 						title: note.title,
 						content: note.content,
 						summary: note.summary,
+						tags: note.tags,
 						updatedAt: note.updatedAt,
 					})),
 				),
@@ -325,6 +327,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 					title: note.title,
 					content: note.summary,
 					summary: note.summary,
+					tags: note.tags ?? [],
 					updatedAt: note.updatedAt,
 				})),
 			);
@@ -352,6 +355,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 						title: hydrated.title,
 						content: hydrated.content,
 						summary: hydrated.summary,
+						tags: hydrated.tags,
 						updatedAt: Math.max(note.updatedAt, hydrated.updatedAt),
 					};
 				}),
@@ -708,6 +712,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 						content: string;
 						updatedAt: number;
 						summary?: string;
+						tags?: string[];
 					};
 				};
 
@@ -717,6 +722,7 @@ export function WorkspaceShell({ userId, selectedNoteId, onSelectNoteId }: Works
 						title: payload.note.title,
 						content: payload.note.content,
 						summary: payload.note.summary ?? summarizeContent(payload.note.content),
+						tags: payload.note.tags ?? [],
 						updatedAt: payload.note.updatedAt,
 					}),
 				);
