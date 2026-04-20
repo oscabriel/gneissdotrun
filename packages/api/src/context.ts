@@ -3,7 +3,7 @@ import type { Context as HonoContext } from "hono";
 import { auth } from "@gneissdotrun/auth";
 
 export type CreateContextOptions = {
-	context: HonoContext;
+	context: HonoContext<any>;
 };
 
 export async function createContext({ context }: CreateContextOptions) {
@@ -12,6 +12,7 @@ export async function createContext({ context }: CreateContextOptions) {
 	});
 	return {
 		session,
+		hono: context,
 	};
 }
 

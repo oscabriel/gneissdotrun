@@ -20,6 +20,7 @@
 		"@orpc/openapi": "catalog:",
 		"@orpc/server": "catalog:",
 		"@orpc/zod": "catalog:",
+		"agents": "^0.8.0",
 		"dotenv": "catalog:",
 		"drizzle-orm": "catalog:",
 		"zod": "catalog:"
