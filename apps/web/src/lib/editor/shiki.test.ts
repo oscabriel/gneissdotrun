@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { detectCodeLanguage, normalizeCodeLanguage } from "@/lib/editor/shiki";
+import { detectCodeLanguage } from "./code-language";
+import { normalizeCodeLanguage } from "./shiki";
 
 describe("shiki helpers", () => {
 	it("detects markdown language classes", () => {

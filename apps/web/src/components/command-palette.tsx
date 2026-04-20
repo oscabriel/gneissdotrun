@@ -6,7 +6,7 @@ export type WorkspacePaletteAction =
 	| { kind: "workflow"; workflow: "organize" | "fan_out" }
 	| { kind: "navigation"; to: "/collections" | "/digest" | "/history" | "/contradictions" }
 	| { kind: "layout"; target: "left" | "right" }
-	| { kind: "focus"; target: "directory_search" | "editor" }
+	| { kind: "focus"; target: "editor" }
 	| { kind: "utility"; section: "review" | "controls" | "utility" };
 
 interface CommandPaletteProps {
@@ -22,7 +22,7 @@ interface PaletteItem {
 	shortcutHint?: string;
 }
 
-const paletteItems: PaletteItem[] = [
+export const workspacePaletteItems: PaletteItem[] = [
 	{
 		id: "layout-left",
 		title: "Toggle left directory",
@@ -36,13 +36,6 @@ const paletteItems: PaletteItem[] = [
 		description: "Show or hide the workspace utility rail",
 		action: { kind: "layout", target: "right" },
 		shortcutHint: "⌘.",
-	},
-	{
-		id: "focus-directory",
-		title: "Focus directory search",
-		description: "Jump to the left sidebar search field",
-		action: { kind: "focus", target: "directory_search" },
-		shortcutHint: "⌘⇧1",
 	},
 	{
 		id: "focus-editor",
@@ -186,7 +179,7 @@ export function CommandPalette({ onSelectAction, onOpenChange }: CommandPaletteP
 		<KumoCommandPalette.Root
 			open={open}
 			onOpenChange={setOpenState}
-			items={paletteItems}
+			items={workspacePaletteItems}
 			value={query}
 			onValueChange={setQuery}
 			itemToStringValue={(item) => `${item.title} ${item.description}`}

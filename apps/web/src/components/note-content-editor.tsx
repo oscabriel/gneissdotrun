@@ -1,14 +1,32 @@
-import { analyzeRichModeSupport } from "@gneissdotrun/editor-markdown";
-import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
+import { Suspense, forwardRef, lazy, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 
-import { MarkdownPreview } from "@/components/markdown-preview";
 import {
 	MarkdownSourceEditor,
 	type MarkdownSourceEditorHandle,
 } from "@/components/markdown-source-editor";
-import { RichTextEditor, type RichTextEditorHandle } from "@/components/rich-text-editor";
+import type { RichTextEditorHandle } from "@/components/rich-text-editor";
+import { emitWorkspaceDevtoolsEvent } from "@/lib/devtools/workspace-devtools";
 import type { EditorMode } from "@/lib/editor/editor-mode";
 import { cn } from "@/lib/utils";
+
+const LazyMarkdownPreview = lazy(async () => {
+	const module = await import("@/components/markdown-preview");
+	return { default: module.MarkdownPreview };
+});
+
+const LazyRichTextEditor = lazy(async () => {
+	const module = await import("@/components/rich-text-editor");
+	return { default: module.RichTextEditor };
+});
+
+interface RichSupportResultLike {
+	supported: boolean;
+	issues: Array<{ message: string }>;
+}
+
+function EditorSurfaceFallback({ className, message }: { className?: string; message: string }) {
+	return <div className={cn("bg-kumo-base min-h-40 rounded-md p-4 text-sm text-kumo-subtle", className)}>{message}</div>;
+}
 
 export interface NoteContentEditorHandle {
 	focus: () => void;
@@ -45,12 +63,90 @@ export const NoteContentEditor = forwardRef<NoteContentEditorHandle, NoteContent
 	) {
 		const sourceRef = useRef<MarkdownSourceEditorHandle | null>(null);
 		const richRef = useRef<RichTextEditorHandle | null>(null);
+		const pendingFocusRef = useRef(false);
+		const richSupportAnalyzerRef = useRef<((markdown: string) => RichSupportResultLike) | null>(null);
+		const [richSupportAnalyzerReady, setRichSupportAnalyzerReady] = useState(false);
+		const [richSupportAnalyzerError, setRichSupportAnalyzerError] = useState<string | null>(null);
 
-		const richSupport = useMemo(() => analyzeRichModeSupport(value), [value]);
+		useEffect(() => {
+			if (editorMode !== "rich" || richSupportAnalyzerRef.current) {
+				return;
+			}
+
+			let cancelled = false;
+			emitWorkspaceDevtoolsEvent("editor-diagnostic", {
+				kind: "rich-support-loading",
+				source: "note-content-editor",
+				detail: {
+					editorMode,
+				},
+				timestamp: Date.now(),
+			});
+
+			void import("@gneissdotrun/editor-markdown")
+				.then((module) => {
+					if (cancelled) {
+						return;
+					}
+
+					richSupportAnalyzerRef.current = module.analyzeRichModeSupport;
+					setRichSupportAnalyzerReady(true);
+					setRichSupportAnalyzerError(null);
+					emitWorkspaceDevtoolsEvent("editor-diagnostic", {
+						kind: "rich-support-ready",
+						source: "note-content-editor",
+						detail: {
+							editorMode,
+						},
+						timestamp: Date.now(),
+					});
+				})
+				.catch(() => {
+					if (cancelled) {
+						return;
+					}
+
+					setRichSupportAnalyzerError("Rich mode is temporarily unavailable.");
+					emitWorkspaceDevtoolsEvent("editor-diagnostic", {
+						kind: "rich-support-error",
+						source: "note-content-editor",
+						message: "Rich mode is temporarily unavailable.",
+						detail: {
+							editorMode,
+						},
+						timestamp: Date.now(),
+					});
+				});
+
+			return () => {
+				cancelled = true;
+			};
+		}, [editorMode]);
+
+		const richSupport = useMemo(() => {
+			if (editorMode !== "rich") {
+				return null;
+			}
+
+			const analyzeRichModeSupport = richSupportAnalyzerRef.current;
+			if (!analyzeRichModeSupport) {
+				return null;
+			}
+
+			return analyzeRichModeSupport(value);
+		}, [editorMode, richSupportAnalyzerReady, value]);
 
 		const richModeNotice = useMemo(() => {
 			if (editorMode !== "rich") {
 				return null;
+			}
+
+			if (richSupportAnalyzerError) {
+				return richSupportAnalyzerError;
+			}
+
+			if (!richSupport) {
+				return "Preparing rich editor...";
 			}
 
 			if (!richSupport.supported) {
@@ -58,7 +154,7 @@ export const NoteContentEditor = forwardRef<NoteContentEditorHandle, NoteContent
 			}
 
 			return null;
-		}, [editorMode, richSupport.issues, richSupport.supported]);
+		}, [editorMode, richSupport, richSupportAnalyzerError]);
 
 		const effectiveMode: EditorMode = editorMode === "rich" && !richModeNotice ? "rich" : "source";
 
@@ -66,24 +162,50 @@ export const NoteContentEditor = forwardRef<NoteContentEditorHandle, NoteContent
 			ref,
 			() => ({
 				focus: () => {
+					pendingFocusRef.current = true;
 					if (effectiveMode === "rich") {
-						richRef.current?.focus();
+						if (richRef.current) {
+							richRef.current.focus();
+							pendingFocusRef.current = false;
+						}
 						return;
 					}
 
 					if (effectiveMode === "source") {
-						sourceRef.current?.focus();
+						if (sourceRef.current) {
+							sourceRef.current.focus();
+							pendingFocusRef.current = false;
+						}
 					}
 				},
 			}),
 			[effectiveMode],
 		);
 
+		useEffect(() => {
+			if (!pendingFocusRef.current || previewOpen) {
+				return;
+			}
+
+			if (effectiveMode === "rich" && richRef.current) {
+				richRef.current.focus();
+				pendingFocusRef.current = false;
+				return;
+			}
+
+			if (effectiveMode === "source" && sourceRef.current) {
+				sourceRef.current.focus();
+				pendingFocusRef.current = false;
+			}
+		}, [effectiveMode, previewOpen]);
+
 		if (previewOpen) {
 			return (
-				<div className={cn("bg-kumo-base min-h-40 rounded-md p-4", className)}>
-					<MarkdownPreview markdown={value} />
-				</div>
+				<Suspense fallback={<EditorSurfaceFallback className={className} message="Loading preview..." />}>
+					<div className={cn("bg-kumo-base min-h-40 rounded-md p-4", className)}>
+						<LazyMarkdownPreview markdown={value} />
+					</div>
+				</Suspense>
 			);
 		}
 
@@ -95,17 +217,19 @@ export const NoteContentEditor = forwardRef<NoteContentEditorHandle, NoteContent
 					</div>
 				) : null}
 				{effectiveMode === "rich" ? (
-					<RichTextEditor
-						ref={richRef}
-						label={label}
-						value={value}
-						placeholder={placeholder}
-						className={className}
-						autoFocus={autoFocus}
-						onChangeMarkdown={onChangeMarkdown}
-						onBlur={onBlur}
-						onRunShortcut={onRunShortcut}
-					/>
+					<Suspense fallback={<EditorSurfaceFallback className={className} message="Loading rich editor..." />}>
+						<LazyRichTextEditor
+							ref={richRef}
+							label={label}
+							value={value}
+							placeholder={placeholder}
+							className={className}
+							autoFocus={autoFocus}
+							onChangeMarkdown={onChangeMarkdown}
+							onBlur={onBlur}
+							onRunShortcut={onRunShortcut}
+						/>
+					</Suspense>
 				) : (
 					<MarkdownSourceEditor
 						ref={sourceRef}

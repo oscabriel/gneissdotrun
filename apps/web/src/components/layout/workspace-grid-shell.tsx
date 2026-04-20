@@ -1,4 +1,4 @@
-import { Button, Tooltip } from "@cloudflare/kumo";
+import { Button, Dialog, Tooltip } from "@cloudflare/kumo";
 import { Menu, PanelLeftClose, PanelLeftOpen, PanelRight } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -8,6 +8,7 @@ interface WorkspaceGridShellProps {
 	leftRail: ReactNode;
 	main: ReactNode;
 	rightRail: ReactNode;
+	mobileRightRail?: ReactNode;
 	leftCollapsed: boolean;
 	rightCollapsed: boolean;
 	onToggleLeft: () => void;
@@ -20,6 +21,7 @@ export function WorkspaceGridShell({
 	leftRail,
 	main,
 	rightRail,
+	mobileRightRail,
 	leftCollapsed,
 	rightCollapsed,
 	onToggleLeft,
@@ -27,6 +29,8 @@ export function WorkspaceGridShell({
 	mobilePanel,
 	onCloseMobilePanel,
 }: WorkspaceGridShellProps) {
+	const rightMobileContent = mobileRightRail ?? rightRail;
+
 	return (
 		<>
 			{/* Desktop left rail — always visible */}
@@ -91,7 +95,10 @@ export function WorkspaceGridShell({
 					variant="ghost"
 					shape="square"
 					onClick={onToggleLeft}
-					aria-label="Open notes directory"
+					aria-haspopup="dialog"
+					aria-expanded={mobilePanel === "left"}
+					aria-controls="workspace-mobile-left-drawer"
+					aria-label={mobilePanel === "left" ? "Close notes directory" : "Open notes directory"}
 				>
 					<Menu className="size-4" aria-hidden />
 				</Button>
@@ -101,68 +108,72 @@ export function WorkspaceGridShell({
 					variant="ghost"
 					shape="square"
 					onClick={onToggleRight}
-					aria-label="Open utilities"
+					aria-haspopup="dialog"
+					aria-expanded={mobilePanel === "right"}
+					aria-controls="workspace-mobile-right-drawer"
+					aria-label={mobilePanel === "right" ? "Close utilities" : "Open utilities"}
 				>
 					<PanelRight className="size-4" aria-hidden />
 				</Button>
 			</header>
 
-			{/* Mobile left drawer */}
-			{mobilePanel === "left" ? (
-				<div
-					className="bg-kumo-overlay/70 fixed inset-0 z-50 lg:hidden"
-					onClick={onCloseMobilePanel}
-					onKeyDown={(e) => {
-						if (e.key === "Escape") {
-							onCloseMobilePanel();
-						}
-					}}
+			<Dialog.Root
+				open={mobilePanel === "left"}
+				onOpenChange={(open) => {
+					if (!open) {
+						onCloseMobilePanel();
+					}
+				}}
+			>
+				<Dialog
+					size="sm"
+					className="left-0 top-0 h-dvh w-[min(20rem,calc(100vw-1rem))] max-w-none translate-x-0 translate-y-0 rounded-none p-0 sm:left-0 sm:top-0 sm:w-80 sm:max-w-none sm:translate-x-0 sm:translate-y-0 lg:hidden"
 				>
-					<aside
-						className="border-kumo-line bg-kumo-elevated h-full w-72 border-r"
-						onClick={(e) => {
-							e.stopPropagation();
-						}}
-					>
-						<div className="border-kumo-line flex h-12 items-center justify-between border-b px-3">
-							<span className="text-kumo-strong text-sm font-semibold">Directory</span>
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={onCloseMobilePanel}
-								aria-label="Close directory"
-							>
+					<div id="workspace-mobile-left-drawer" className="flex h-full flex-col overflow-hidden">
+						<div className="border-kumo-line flex h-12 shrink-0 items-center justify-between border-b px-3">
+							<div>
+								<Dialog.Title className="text-kumo-strong text-sm font-semibold">Directory</Dialog.Title>
+								<Dialog.Description className="sr-only">
+									Browse and filter saved notes.
+								</Dialog.Description>
+							</div>
+							<Button size="sm" variant="ghost" onClick={onCloseMobilePanel} aria-label="Close directory">
 								Close
 							</Button>
 						</div>
-						<div className="flex h-[calc(100%-3rem)] flex-col overflow-hidden">{leftRail}</div>
-					</aside>
-				</div>
-			) : null}
-
-			{/* Mobile right drawer */}
-			{mobilePanel === "right" ? (
-				<div
-					className="bg-kumo-overlay/70 fixed inset-0 z-50 lg:hidden"
-					onClick={onCloseMobilePanel}
-					onKeyDown={(e) => {
-						if (e.key === "Escape") {
-							onCloseMobilePanel();
-						}
-					}}
-				>
-					<div className="flex h-full justify-end">
-						<aside
-							className="border-kumo-line bg-kumo-elevated h-full w-12 border-l"
-							onClick={(e) => {
-								e.stopPropagation();
-							}}
-						>
-							{rightRail}
-						</aside>
+						<div className="flex min-h-0 flex-1 flex-col overflow-hidden">{leftRail}</div>
 					</div>
-				</div>
-			) : null}
+				</Dialog>
+			</Dialog.Root>
+
+			<Dialog.Root
+				open={mobilePanel === "right"}
+				onOpenChange={(open) => {
+					if (!open) {
+						onCloseMobilePanel();
+					}
+				}}
+			>
+				<Dialog
+					size="sm"
+					className="left-auto right-0 top-0 h-dvh w-[min(20rem,calc(100vw-1rem))] max-w-none translate-x-0 translate-y-0 rounded-none p-0 sm:left-auto sm:right-0 sm:top-0 sm:w-72 sm:max-w-none sm:translate-x-0 sm:translate-y-0 lg:hidden"
+				>
+					<div id="workspace-mobile-right-drawer" className="flex h-full flex-col overflow-hidden">
+						<div className="border-kumo-line flex h-12 shrink-0 items-center justify-between border-b px-3">
+							<div>
+								<Dialog.Title className="text-kumo-strong text-sm font-semibold">Utilities</Dialog.Title>
+								<Dialog.Description className="sr-only">
+									Workspace controls and review navigation.
+								</Dialog.Description>
+							</div>
+							<Button size="sm" variant="ghost" onClick={onCloseMobilePanel} aria-label="Close utilities">
+								Close
+							</Button>
+						</div>
+						<div className="flex min-h-0 flex-1 flex-col overflow-hidden">{rightMobileContent}</div>
+					</div>
+				</Dialog>
+			</Dialog.Root>
 		</>
 	);
 }

@@ -10,6 +10,7 @@ import type { UIMessage } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { NoteContentEditor, type NoteContentEditorHandle } from "@/components/note-content-editor";
+import { TextPromptDialog } from "@/components/dialogs/text-prompt-dialog";
 import { createNoteSessionId } from "@/lib/agents/client";
 import { useRewriteAgentChat } from "@/lib/agents/hooks";
 import type { EditorMode } from "@/lib/editor/editor-mode";
@@ -260,6 +261,7 @@ export function NoteEditor({
 	const [noteContent, setNoteContent] = useState(sanitizedInitialContent);
 	const [activeSlashRun, setActiveSlashRun] = useState<ActiveSlashRun | null>(null);
 	const [slashRunStatus, setSlashRunStatus] = useState<Exclude<NoteRunStatus, "idle"> | null>(null);
+	const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
 
 	const noteContentRef = useRef(sanitizedInitialContent);
 	const titleRef = useRef(normalizedInitialTitle);
@@ -537,12 +539,7 @@ export function NoteEditor({
 		};
 	}, [clearAutosaveTimer, flushSave]);
 
-	const handleRename = async () => {
-		const nextTitle = window.prompt("Rename note", titleRef.current);
-		if (nextTitle === null) {
-			return;
-		}
-
+	const handleRename = async (nextTitle: string) => {
 		const normalized = nextTitle.trim() || "Untitled note";
 		if (normalized === titleRef.current) {
 			return;
@@ -577,6 +574,18 @@ export function NoteEditor({
 
 	return (
 		<div className="relative">
+			<TextPromptDialog
+				open={isRenameDialogOpen}
+				onOpenChange={setIsRenameDialogOpen}
+				title="Rename note"
+				description="Update the note title without leaving the editor."
+				label="Note title"
+				defaultValue={titleRef.current}
+				placeholder="Untitled note"
+				confirmLabel="Save title"
+				onSubmit={handleRename}
+				maxLength={120}
+			/>
 			{activeSlashRun ? (
 				<SlashRewriteRunner
 					noteId={noteId}
@@ -623,7 +632,7 @@ export function NoteEditor({
 							<DropdownMenu.Separator />
 							<DropdownMenu.Item
 								onClick={() => {
-									void handleRename();
+									setIsRenameDialogOpen(true);
 								}}
 							>
 								Rename note

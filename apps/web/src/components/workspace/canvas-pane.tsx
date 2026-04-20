@@ -1,6 +1,6 @@
 import { Button } from "@cloudflare/kumo";
 
-import type { SidebarNote } from "@/components/sidebar/notes-sidebar";
+import type { SidebarNote } from "@/components/sidebar/sidebar-note";
 import type { EditorMode } from "@/lib/editor/editor-mode";
 import type { EditorWidth } from "@/lib/editor/editor-width";
 

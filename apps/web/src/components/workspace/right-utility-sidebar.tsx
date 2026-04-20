@@ -9,6 +9,7 @@ import {
 	Eye,
 	History,
 	Info,
+	LayoutGrid,
 	Layers,
 	Moon,
 	PanelRightClose,
@@ -23,6 +24,10 @@ import { forwardRef, useImperativeHandle } from "react";
 
 import { getEditorModeActionLabel, type EditorMode } from "@/lib/editor/editor-mode";
 import { getEditorWidthActionLabel, type EditorWidth } from "@/lib/editor/editor-width";
+import {
+	getWorkspaceMainPaneModeActionLabel,
+	type WorkspaceMainPaneMode,
+} from "@/lib/workspace/main-pane-mode";
 import { cn } from "@/lib/utils";
 
 export type UtilitySectionId = "review" | "controls" | "utility";
@@ -33,6 +38,8 @@ type FontMode = "mono" | "serif";
 interface RightUtilitySidebarProps {
 	collapsed: boolean;
 	onToggle: () => void;
+	showToggle?: boolean;
+	sectionIdPrefix?: string;
 	onCreateNote: () => void;
 	onNavigateHistory: () => void;
 	onNavigateCollections: () => void;
@@ -44,6 +51,8 @@ interface RightUtilitySidebarProps {
 	fontMode: FontMode;
 	onToggleEditorWidth: () => void;
 	editorWidth: EditorWidth;
+	onToggleMainPaneMode: () => void;
+	mainPaneMode: WorkspaceMainPaneMode;
 	onToggleEditorMode: () => void;
 	editorMode: EditorMode;
 	onTogglePreview: () => void;
@@ -94,6 +103,8 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 		{
 			collapsed,
 			onToggle,
+			showToggle = true,
+			sectionIdPrefix = "workspace",
 			onCreateNote,
 			onNavigateHistory,
 			onNavigateCollections,
@@ -105,6 +116,8 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 			fontMode,
 			onToggleEditorWidth,
 			editorWidth,
+			onToggleMainPaneMode,
+			mainPaneMode,
 			onToggleEditorMode,
 			editorMode,
 			onTogglePreview,
@@ -120,21 +133,21 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 			focusSection: (section) => {
 				if (section === "review") {
 					(
-						document.getElementById("workspace-review-primary-action") as HTMLElement | null
+						document.getElementById(`${sectionIdPrefix}-review-primary-action`) as HTMLElement | null
 					)?.focus();
 					return;
 				}
 				if (section === "controls") {
 					(
-						document.getElementById("workspace-controls-primary-action") as HTMLElement | null
+						document.getElementById(`${sectionIdPrefix}-controls-primary-action`) as HTMLElement | null
 					)?.focus();
 					return;
 				}
 				(
-					document.getElementById("workspace-utility-primary-action") as HTMLElement | null
+					document.getElementById(`${sectionIdPrefix}-utility-primary-action`) as HTMLElement | null
 				)?.focus();
 			},
-		}));
+		}), [sectionIdPrefix]);
 
 		const groupClass = cn(
 			"border-kumo-line flex flex-col gap-1 border-b py-2",
@@ -143,24 +156,25 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 
 		return (
 			<div className="flex h-full flex-col overflow-hidden">
-				{/* Toggle */}
-				<div className="border-kumo-line flex h-12 shrink-0 items-center justify-end border-b px-2">
-					<Tooltip content={collapsed ? "Open utilities (⌘.)" : "Close utilities (⌘.)"}>
-						<Button
-							size="sm"
-							variant="ghost"
-							shape="square"
-							onClick={onToggle}
-							aria-label="Toggle utility sidebar"
-						>
-							{collapsed ? (
-								<PanelRightOpen className="size-4" aria-hidden />
-							) : (
-								<PanelRightClose className="size-4" aria-hidden />
-							)}
-						</Button>
-					</Tooltip>
-				</div>
+				{showToggle ? (
+					<div className="border-kumo-line flex h-12 shrink-0 items-center justify-end border-b px-2">
+						<Tooltip content={collapsed ? "Open utilities (⌘.)" : "Close utilities (⌘.)"}>
+							<Button
+								size="sm"
+								variant="ghost"
+								shape="square"
+								onClick={onToggle}
+								aria-label="Toggle utility sidebar"
+							>
+								{collapsed ? (
+									<PanelRightOpen className="size-4" aria-hidden />
+								) : (
+									<PanelRightClose className="size-4" aria-hidden />
+								)}
+							</Button>
+						</Tooltip>
+					</div>
+				) : null}
 
 				{/* New note */}
 				<div className={groupClass}>
@@ -179,7 +193,7 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 						label="History"
 						collapsed={collapsed}
 						onClick={onNavigateHistory}
-						id="workspace-review-primary-action"
+						id={`${sectionIdPrefix}-review-primary-action`}
 					/>
 					<RailButton
 						icon={Layers}
@@ -213,7 +227,7 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 						label={themeMode === "dark" ? "Light theme" : "Dark theme"}
 						collapsed={collapsed}
 						onClick={onToggleTheme}
-						id="workspace-controls-primary-action"
+						id={`${sectionIdPrefix}-controls-primary-action`}
 					/>
 					<RailButton
 						icon={Type}
@@ -222,23 +236,33 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 						onClick={onToggleFont}
 					/>
 					<RailButton
-						icon={Columns2}
-						label={getEditorWidthActionLabel(editorWidth)}
+						icon={mainPaneMode === "editor" ? LayoutGrid : Pencil}
+						label={getWorkspaceMainPaneModeActionLabel(mainPaneMode)}
 						collapsed={collapsed}
-						onClick={onToggleEditorWidth}
+						onClick={onToggleMainPaneMode}
 					/>
-					<RailButton
-						icon={editorMode === "source" ? Type : Pencil}
-						label={getEditorModeActionLabel(editorMode)}
-						collapsed={collapsed}
-						onClick={onToggleEditorMode}
-					/>
-					<RailButton
-						icon={previewOpen ? Pencil : Eye}
-						label={previewOpen ? "Close preview" : "Open preview"}
-						collapsed={collapsed}
-						onClick={onTogglePreview}
-					/>
+					{mainPaneMode === "editor" ? (
+						<>
+							<RailButton
+								icon={Columns2}
+								label={getEditorWidthActionLabel(editorWidth)}
+								collapsed={collapsed}
+								onClick={onToggleEditorWidth}
+							/>
+							<RailButton
+								icon={editorMode === "source" ? Type : Pencil}
+								label={getEditorModeActionLabel(editorMode)}
+								collapsed={collapsed}
+								onClick={onToggleEditorMode}
+							/>
+							<RailButton
+								icon={previewOpen ? Pencil : Eye}
+								label={previewOpen ? "Close preview" : "Open preview"}
+								collapsed={collapsed}
+								onClick={onTogglePreview}
+							/>
+						</>
+					) : null}
 					<RailButton
 						icon={Download}
 						label="Download (.md)"
@@ -256,7 +280,7 @@ export const RightUtilitySidebar = forwardRef<RightUtilitySidebarHandle, RightUt
 						label="Profile"
 						collapsed={collapsed}
 						onClick={onOpenProfile}
-						id="workspace-utility-primary-action"
+						id={`${sectionIdPrefix}-utility-primary-action`}
 					/>
 					<RailButton icon={Cog} label="Settings" collapsed={collapsed} onClick={onOpenSettings} />
 					<RailButton icon={Info} label="Info" collapsed={collapsed} onClick={onOpenInfo} />

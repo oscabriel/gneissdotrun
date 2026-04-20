@@ -11,7 +11,7 @@ import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
-import { detectCodeLanguage } from "@/lib/editor/shiki";
+import { detectCodeLanguage } from "@/lib/editor/code-language";
 import { cn } from "@/lib/utils";
 
 interface MarkdownPreviewProps {

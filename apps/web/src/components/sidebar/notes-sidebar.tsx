@@ -1,16 +1,8 @@
 import { Button, Empty, Input } from "@cloudflare/kumo";
 import { useMemo, useState, type ChangeEvent } from "react";
 
+import type { SidebarNote } from "@/components/sidebar/sidebar-note";
 import { cn } from "@/lib/utils";
-
-export interface SidebarNote {
-	id: string;
-	title: string;
-	summary: string;
-	content: string;
-	tags: string[];
-	updatedAt: number;
-}
 
 interface NotesSidebarProps {
 	notes: SidebarNote[];

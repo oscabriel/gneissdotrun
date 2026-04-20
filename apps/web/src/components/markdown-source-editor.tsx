@@ -170,13 +170,13 @@ export const MarkdownSourceEditor = forwardRef<
 		const view = new EditorView({
 			state: EditorState.create({
 				doc: lastAppliedValueRef.current,
-				extensions: [
-					EditorView.lineWrapping,
-					drawSelection(),
-					history(),
-					sourceEditorTheme,
-					slashCommandLinePlugin,
-					markdown({ codeLanguages: languages }),
+					extensions: [
+						EditorView.lineWrapping,
+						drawSelection(),
+						history(),
+						sourceEditorTheme,
+						slashCommandLinePlugin,
+						markdown({ codeLanguages: languages }),
 					keymap.of([
 						indentWithTab,
 						...defaultKeymap,

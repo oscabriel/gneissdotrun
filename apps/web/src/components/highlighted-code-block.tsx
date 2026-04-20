@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
 
-import { highlightCodeToHtml } from "@/lib/editor/shiki";
-
 interface HighlightedCodeBlockProps {
 	code: string;
 	language?: string | null;
@@ -15,7 +13,8 @@ export function HighlightedCodeBlock({ code, language, className }: HighlightedC
 		let cancelled = false;
 		setHtml(null);
 
-		void highlightCodeToHtml(code, language)
+		void import("@/lib/editor/shiki")
+			.then((module) => module.highlightCodeToHtml(code, language))
 			.then((nextHtml) => {
 				if (!cancelled) {
 					setHtml(nextHtml);

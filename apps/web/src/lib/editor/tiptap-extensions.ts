@@ -11,8 +11,6 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
-
-import { highlightCodeToTokens } from "@/lib/editor/shiki";
 import {
 	getSlashCommandClassName,
 	getSlashCommandPresentation,
@@ -82,51 +80,58 @@ const shikiCodeBlockPluginKey = new PluginKey<DecorationSet>("shikiCodeBlockHigh
 
 async function buildCodeBlockDecorations(doc: ProseMirrorNode): Promise<DecorationSet> {
 	const decorations: Decoration[] = [];
-	const jobs: Promise<void>[] = [];
+	const codeBlocks: Array<{ code: string; language: string | null; pos: number }> = [];
 
 	doc.descendants((node, pos) => {
 		if (node.type.name !== "codeBlock") {
 			return;
 		}
 
-		const language = typeof node.attrs.language === "string" ? node.attrs.language : null;
-		const code = node.textContent;
+		codeBlocks.push({
+			code: node.textContent,
+			language: typeof node.attrs.language === "string" ? node.attrs.language : null,
+			pos,
+		});
+	});
 
-		jobs.push(
-			highlightCodeToTokens(code, language).then((lines) => {
-				for (const line of lines) {
-					for (const token of line) {
-						if (!token.content) {
-							continue;
-						}
+	if (codeBlocks.length === 0) {
+		return DecorationSet.empty;
+	}
 
-						const from = pos + 1 + token.offset;
-						const to = from + token.content.length;
-						if (to <= from) {
-							continue;
-						}
-
-						const fontStyle = token.variants.light.fontStyle ?? token.variants.dark.fontStyle ?? 0;
-						const styles = [
-							token.variants.light.color ? `--shiki-light:${token.variants.light.color}` : null,
-							token.variants.dark.color ? `--shiki-dark:${token.variants.dark.color}` : null,
-							fontStyle & 1 ? "font-style:italic" : null,
-							fontStyle & 2 ? "font-weight:600" : null,
-							fontStyle & 4 ? "text-decoration:underline" : null,
-						]
-							.filter((value): value is string => Boolean(value))
-							.join(";");
-
-						decorations.push(
-							Decoration.inline(from, to, {
-								class: "shiki-token",
-								style: styles,
-							}),
-						);
-					}
+	const { highlightCodeToTokens } = await import("@/lib/editor/shiki");
+	const jobs = codeBlocks.map(async ({ code, language, pos }) => {
+		const lines = await highlightCodeToTokens(code, language);
+		for (const line of lines) {
+			for (const token of line) {
+				if (!token.content) {
+					continue;
 				}
-			}),
-		);
+
+				const from = pos + 1 + token.offset;
+				const to = from + token.content.length;
+				if (to <= from) {
+					continue;
+				}
+
+				const fontStyle = token.variants.light.fontStyle ?? token.variants.dark.fontStyle ?? 0;
+				const styles = [
+					token.variants.light.color ? `--shiki-light:${token.variants.light.color}` : null,
+					token.variants.dark.color ? `--shiki-dark:${token.variants.dark.color}` : null,
+					fontStyle & 1 ? "font-style:italic" : null,
+					fontStyle & 2 ? "font-weight:600" : null,
+					fontStyle & 4 ? "text-decoration:underline" : null,
+				]
+					.filter((value): value is string => Boolean(value))
+					.join(";");
+
+				decorations.push(
+					Decoration.inline(from, to, {
+						class: "shiki-token",
+						style: styles,
+					}),
+				);
+			}
+		}
 	});
 
 	await Promise.all(jobs);
