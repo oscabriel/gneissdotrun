@@ -1,70 +1,37 @@
-import { Button } from "@cloudflare/kumo";
-import { env } from "@gneissdotrun/env/web";
-import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { Button, buttonVariants } from "@cloudflare/kumo";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 
-import { authClient } from "@/lib/auth-client";
+import { TextPromptDialog } from "@/components/dialogs/text-prompt-dialog";
+import {
+	analyzeContradictionMutationOptions,
+	contradictionsQueryOptions,
+	resolveContradictionMutationOptions,
+} from "@/lib/queries/contradictions";
 
-interface ContradictionItem {
-	id: string;
-	status: string;
-	updatedAt: number;
-	factA: {
-		id: string;
-		text: string;
-	};
-	factB: {
-		id: string;
-		text: string;
-	};
-}
-
-export const Route = createFileRoute("/contradictions")({
+export const Route = createFileRoute("/_protected/contradictions")({
+	loader: ({ context }) => context.queryClient.ensureQueryData(contradictionsQueryOptions()),
 	component: ContradictionsRoute,
 });
 
 function ContradictionsRoute() {
-	const { data: session, isPending } = authClient.useSession();
-	const [contradictions, setContradictions] = useState<ContradictionItem[]>([]);
+	const queryClient = useQueryClient();
+	const { data, refetch, isFetching } = useSuspenseQuery(contradictionsQueryOptions());
+	const analyzeMutation = useMutation(analyzeContradictionMutationOptions());
+	const resolveMutation = useMutation(resolveContradictionMutationOptions(queryClient));
 	const [workflowIdsByContradiction, setWorkflowIdsByContradiction] = useState<
 		Record<string, string>
 	>({});
-	const [isLoading, setIsLoading] = useState(false);
 	const [isWorkingId, setIsWorkingId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
-
-	const loadContradictions = useCallback(async () => {
-		setIsLoading(true);
-		setError(null);
-
-		try {
-			const response = await fetch(`${env.VITE_SERVER_URL}/api/contradictions`, {
-				method: "GET",
-				credentials: "include",
-			});
-
-			if (!response.ok) {
-				const payload = (await response.json()) as { error?: string };
-				throw new Error(payload.error ?? "Failed to load contradictions");
-			}
-
-			const payload = (await response.json()) as { contradictions: ContradictionItem[] };
-			setContradictions(payload.contradictions ?? []);
-		} catch (loadError) {
-			setError(loadError instanceof Error ? loadError.message : "Failed to load contradictions");
-		} finally {
-			setIsLoading(false);
-		}
-	}, []);
-
-	useEffect(() => {
-		if (!session?.user.id) {
-			return;
-		}
-
-		void loadContradictions();
-	}, [loadContradictions, session?.user.id]);
+	const [pendingResolution, setPendingResolution] = useState<{
+		contradictionId: string;
+		keep: "factA" | "factB";
+		workflowId: string;
+	} | null>(null);
+	const contradictions = data.contradictions ?? [];
 
 	const analyzeContradiction = async (contradictionId: string) => {
 		setIsWorkingId(contradictionId);
@@ -72,27 +39,12 @@ function ContradictionsRoute() {
 		setNotice(null);
 
 		try {
-			const response = await fetch(`${env.VITE_SERVER_URL}/api/contradictions/analyze`, {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-				},
-				credentials: "include",
-				body: JSON.stringify({ contradictionId }),
-			});
-
-			if (!response.ok) {
-				const payload = (await response.json()) as { error?: string };
-				throw new Error(payload.error ?? "Failed to start contradiction analysis");
-			}
-
-			const payload = (await response.json()) as {
-				workflowId?: string | null;
-			};
-			if (payload.workflowId) {
+			const payload = await analyzeMutation.mutateAsync({ contradictionId });
+			const workflowId = payload.workflowId;
+			if (typeof workflowId === "string" && workflowId.length > 0) {
 				setWorkflowIdsByContradiction((previous) => ({
 					...previous,
-					[contradictionId]: payload.workflowId!,
+					[contradictionId]: workflowId,
 				}));
 			}
 			setNotice("Started contradiction analysis. Choose Keep A or Keep B to resolve.");
@@ -107,74 +59,70 @@ function ContradictionsRoute() {
 		}
 	};
 
-	const resolveContradiction = async (
+	const requestResolution = (
 		contradictionId: string,
 		keep: "factA" | "factB",
 		workflowId?: string,
 	) => {
-		if (!workflowId) {
+		if (!workflowId || workflowId.length === 0) {
 			setError("Run Analyze first so a workflow can be approved.");
 			return;
 		}
+
+		setPendingResolution({ contradictionId, keep, workflowId });
+	};
+
+	const resolveContradiction = async (reason: string) => {
+		if (!pendingResolution) {
+			return;
+		}
+
+		const { contradictionId, keep, workflowId } = pendingResolution;
 
 		setIsWorkingId(contradictionId);
 		setError(null);
 		setNotice(null);
 
-		const reason = window.prompt("Optional resolution reason", "") ?? undefined;
-
 		try {
-			const response = await fetch(`${env.VITE_SERVER_URL}/api/contradictions/resolve`, {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-				},
-				credentials: "include",
-				body: JSON.stringify({ workflowId, keep, reason }),
-			});
-
-			if (!response.ok) {
-				const payload = (await response.json()) as { error?: string };
-				throw new Error(payload.error ?? "Failed to resolve contradiction");
-			}
-
+			await resolveMutation.mutateAsync({ workflowId, keep, reason: reason.trim() || undefined });
 			setNotice("Contradiction resolved.");
 			setWorkflowIdsByContradiction((previous) => {
 				const next = { ...previous };
 				delete next[contradictionId];
 				return next;
 			});
-			await loadContradictions();
 		} catch (resolveError) {
 			setError(
 				resolveError instanceof Error ? resolveError.message : "Failed to resolve contradiction",
 			);
 		} finally {
 			setIsWorkingId(null);
+			setPendingResolution(null);
 		}
 	};
 
-	if (isPending) {
-		return (
-			<div className="mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center px-4">
-				<p className="text-muted-foreground text-sm">Loading session...</p>
-			</div>
-		);
-	}
-
-	if (!session) {
-		return (
-			<div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col justify-center gap-3 px-4">
-				<p className="text-muted-foreground text-sm">Sign in to review contradictions.</p>
-				<a href="/" className="underline">
-					Back to home
-				</a>
-			</div>
-		);
-	}
-
 	return (
 		<div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-4 py-6">
+			<TextPromptDialog
+				open={pendingResolution !== null}
+				onOpenChange={(open) => {
+					if (!open) {
+						setPendingResolution(null);
+					}
+				}}
+				title="Resolve contradiction"
+				description={
+					pendingResolution
+						? `Confirm which fact to keep and optionally record a reason for choosing ${pendingResolution.keep === "factA" ? "Fact A" : "Fact B"}.`
+						: undefined
+				}
+				label="Resolution reason"
+				defaultValue=""
+				placeholder="Optional context for this decision"
+				confirmLabel="Resolve contradiction"
+				onSubmit={resolveContradiction}
+				maxLength={500}
+			/>
 			<header className="border-border flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
 				<div>
 					<p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
@@ -186,14 +134,18 @@ function ContradictionsRoute() {
 					</p>
 				</div>
 				<div className="flex gap-2">
-					<a href="/">
-						<Button variant="outline">Back to workspace</Button>
-					</a>
-					<a href="/collections">
-						<Button variant="ghost">Collections</Button>
-					</a>
-					<Button variant="outline" onClick={() => void loadContradictions()} disabled={isLoading}>
-						{isLoading ? "Refreshing..." : "Refresh"}
+					<Link to="/" className={buttonVariants({ variant: "outline" })}>
+						Back to workspace
+					</Link>
+					<Link
+						to="/collections"
+						search={{ query: "" }}
+						className={buttonVariants({ variant: "ghost" })}
+					>
+						Collections
+					</Link>
+					<Button variant="outline" onClick={() => void refetch()} disabled={isFetching}>
+						{isFetching ? "Refreshing..." : "Refresh"}
 					</Button>
 				</div>
 			</header>
@@ -201,7 +153,7 @@ function ContradictionsRoute() {
 			{error ? <p className="text-destructive text-xs">{error}</p> : null}
 			{notice ? <p className="text-muted-foreground text-xs">{notice}</p> : null}
 
-			{isLoading ? (
+			{isFetching ? (
 				<p className="text-muted-foreground text-sm">Loading contradictions...</p>
 			) : contradictions.length === 0 ? (
 				<section className="border-border bg-card border p-4 text-xs">
@@ -249,7 +201,7 @@ function ContradictionsRoute() {
 										size="sm"
 										disabled={isWorking || !workflowId}
 										onClick={() => {
-											void resolveContradiction(contradiction.id, "factA", workflowId);
+											requestResolution(contradiction.id, "factA", workflowId);
 										}}
 									>
 										Keep A
@@ -259,7 +211,7 @@ function ContradictionsRoute() {
 										size="sm"
 										disabled={isWorking || !workflowId}
 										onClick={() => {
-											void resolveContradiction(contradiction.id, "factB", workflowId);
+											requestResolution(contradiction.id, "factB", workflowId);
 										}}
 									>
 										Keep B

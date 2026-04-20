@@ -1,19 +1,22 @@
 import { useForm } from "@tanstack/react-form";
-import { useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { Button, Input, Surface } from "@cloudflare/kumo";
 import type { ChangeEvent } from "react";
 import z from "zod";
 
 import { authClient } from "@/lib/auth-client";
+import { invalidateSessionQuery } from "@/lib/queries/session";
 import { toast } from "@/lib/toast";
 
-import Loader from "./loader";
-
 export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () => void }) {
-	const navigate = useNavigate({
-		from: "/",
-	});
-	const { isPending } = authClient.useSession();
+	const queryClient = useQueryClient();
+	const router = useRouter();
+
+	const refreshAuthState = async () => {
+		await invalidateSessionQuery(queryClient);
+		await router.invalidate({ sync: true });
+	};
 
 	const form = useForm({
 		defaultValues: {
@@ -28,10 +31,8 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
 				},
 				{
 					onSuccess: () => {
-						navigate({
-							to: "/",
-						});
 						toast.success("Sign in successful");
+						void refreshAuthState();
 					},
 					onError: (error) => {
 						toast.error(error.error.message || error.error.statusText);
@@ -46,10 +47,6 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
 			}),
 		},
 	});
-
-	if (isPending) {
-		return <Loader />;
-	}
 
 	return (
 		<Surface className="mx-auto mt-10 w-full max-w-md p-6">

@@ -1,14 +1,12 @@
 import { createMiddleware } from "@tanstack/react-start";
 
-import { authClient } from "@/lib/auth-client";
+import { auth } from "@gneissdotrun/auth";
 
 export const authMiddleware = createMiddleware().server(async ({ next, request }) => {
-	const session = await authClient.getSession({
-		fetchOptions: {
-			headers: request.headers,
-			throw: true,
-		},
+	const session = await auth.api.getSession({
+		headers: request.headers,
 	});
+
 	return next({
 		context: { session },
 	});

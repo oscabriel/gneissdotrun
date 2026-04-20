@@ -1,11 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Surface } from "@cloudflare/kumo";
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 
 import SignInForm from "@/components/sign-in-form";
 import SignUpForm from "@/components/sign-up-form";
-import { WorkspaceShell } from "@/components/workspace/workspace-shell";
-import { authClient } from "@/lib/auth-client";
+import { ensureSessionQueryData } from "@/lib/queries/session";
+
+const LazyWorkspaceShell = lazy(async () => {
+	const module = await import("@/components/workspace/workspace-shell");
+	return { default: module.WorkspaceShell };
+});
 
 export const Route = createFileRoute("/")({
 	validateSearch: (search: Record<string, unknown>): { noteId?: string } => {
@@ -20,11 +23,12 @@ export const Route = createFileRoute("/")({
 
 		return { noteId };
 	},
+	loader: ({ context }) => ensureSessionQueryData(context.queryClient),
 	component: HomeRoute,
 });
 
 function HomeRoute() {
-	const { data: session, isPending } = authClient.useSession();
+	const session = Route.useLoaderData();
 	const search = Route.useSearch();
 	const navigate = Route.useNavigate();
 	const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
@@ -38,16 +42,6 @@ function HomeRoute() {
 			replace: false,
 		});
 	};
-
-	if (isPending) {
-		return (
-			<div className="mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center px-4 py-6">
-				<Surface className="w-full max-w-xl p-8 text-center">
-					<p className="text-kumo-subtle text-sm">Loading workspace...</p>
-				</Surface>
-			</div>
-		);
-	}
 
 	if (!session) {
 		return (
@@ -69,10 +63,18 @@ function HomeRoute() {
 	}
 
 	return (
-		<WorkspaceShell
-			userId={session.user.id}
-			selectedNoteId={search.noteId ?? null}
-			onSelectNoteId={handleSelectNoteId}
-		/>
+		<Suspense
+			fallback={
+				<div className="bg-kumo-base text-kumo-subtle flex min-h-screen items-center justify-center text-sm">
+					Loading workspace...
+				</div>
+			}
+		>
+			<LazyWorkspaceShell
+				userId={session.user.id}
+				selectedNoteId={search.noteId ?? null}
+				onSelectNoteId={handleSelectNoteId}
+			/>
+		</Suspense>
 	);
 }

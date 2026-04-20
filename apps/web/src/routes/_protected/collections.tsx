@@ -1,28 +1,15 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
-import { env } from "@gneissdotrun/env/web";
-import { Button } from "@cloudflare/kumo";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useCallback, useState } from "react";
+import { Button, buttonVariants } from "@cloudflare/kumo";
 
 import { SearchBar } from "@/components/search-bar";
-import { authClient } from "@/lib/auth-client";
-
-type CollectionStatus = "active" | "resolved" | "archived";
-
-interface CollectionItem {
-	id: string;
-	title: string;
-	summary: string;
-	status: CollectionStatus;
-	noteCount: number;
-	lastCaptureAt: number | null;
-	updatedAt: number;
-}
-
-interface LifecycleResult {
-	ok?: boolean;
-	collections?: CollectionItem[];
-	error?: string;
-}
+import {
+	type CollectionStatus,
+	collectionsQueryOptions,
+	updateCollectionStatusMutationOptions,
+} from "@/lib/queries/collections";
+import { searchQueryOptions } from "@/lib/queries/search";
 
 interface CollectionsSearch {
 	query: string;
@@ -33,77 +20,36 @@ function validateCollectionsSearch(search: Record<string, unknown>): Collections
 	return { query };
 }
 
-export const Route = createFileRoute("/collections")({
-	component: CollectionsRoute,
+export const Route = createFileRoute("/_protected/collections")({
 	validateSearch: validateCollectionsSearch,
+	loaderDeps: ({ search }) => ({ query: search.query }),
+	loader: async ({ context, deps }) => {
+		await Promise.all([
+			context.queryClient.ensureQueryData(collectionsQueryOptions()),
+			deps.query.length > 0
+				? context.queryClient.ensureQueryData(searchQueryOptions(deps.query))
+				: Promise.resolve(null),
+		]);
+	},
+	component: CollectionsRoute,
 });
 
 function CollectionsRoute() {
-	const { data: session, isPending } = authClient.useSession();
 	const search = Route.useSearch();
 	const navigate = Route.useNavigate();
-	const [collections, setCollections] = useState<CollectionItem[]>([]);
-	const [isLoading, setIsLoading] = useState(false);
+	const queryClient = useQueryClient();
+	const { data, refetch, isFetching } = useSuspenseQuery(collectionsQueryOptions());
+	const updateStatusMutation = useMutation(updateCollectionStatusMutationOptions(queryClient));
 	const [isUpdatingId, setIsUpdatingId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
-
-	const loadCollections = useCallback(async () => {
-		setIsLoading(true);
-		setError(null);
-
-		try {
-			const response = await fetch(`${env.VITE_SERVER_URL}/api/collections`, {
-				method: "GET",
-				credentials: "include",
-			});
-
-			if (!response.ok) {
-				const payload = (await response.json()) as { error?: string };
-				throw new Error(payload.error ?? "Failed to load collections");
-			}
-
-			const payload = (await response.json()) as { collections: CollectionItem[] };
-			setCollections(payload.collections ?? []);
-		} catch (collectionsError) {
-			setError(collectionsError instanceof Error ? collectionsError.message : "Load failed");
-		} finally {
-			setIsLoading(false);
-		}
-	}, []);
-
-	useEffect(() => {
-		if (!session?.user.id) {
-			return;
-		}
-
-		void loadCollections();
-	}, [loadCollections, session?.user.id]);
+	const collections = data.collections ?? [];
 
 	const updateStatus = async (collectionId: string, status: CollectionStatus) => {
 		setIsUpdatingId(collectionId);
 		setError(null);
 
 		try {
-			const response = await fetch(`${env.VITE_SERVER_URL}/api/collections/lifecycle`, {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-				},
-				credentials: "include",
-				body: JSON.stringify({
-					action: "set_collection_status",
-					collectionId,
-					status,
-				}),
-			});
-
-			if (!response.ok) {
-				const payload = (await response.json()) as { error?: string };
-				throw new Error(payload.error ?? "Collection update failed");
-			}
-
-			const payload = (await response.json()) as LifecycleResult;
-			setCollections(payload.collections ?? []);
+			await updateStatusMutation.mutateAsync({ collectionId, status });
 		} catch (updateError) {
 			setError(updateError instanceof Error ? updateError.message : "Collection update failed");
 		} finally {
@@ -123,25 +69,6 @@ function CollectionsRoute() {
 		[navigate],
 	);
 
-	if (isPending) {
-		return (
-			<div className="mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center px-4">
-				<p className="text-muted-foreground text-sm">Loading session...</p>
-			</div>
-		);
-	}
-
-	if (!session) {
-		return (
-			<div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col justify-center gap-3 px-4">
-				<p className="text-muted-foreground text-sm">Sign in to browse collections.</p>
-				<a href="/" className="underline">
-					Back to home
-				</a>
-			</div>
-		);
-	}
-
 	return (
 		<div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-4 py-6">
 			<header className="border-border flex flex-col gap-2 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
@@ -155,12 +82,12 @@ function CollectionsRoute() {
 					</p>
 				</div>
 				<div className="flex gap-2">
-					<a href="/">
-						<Button variant="outline">Back to workspace</Button>
-					</a>
-					<a href="/digest">
-						<Button variant="ghost">Digest</Button>
-					</a>
+					<Link to="/" className={buttonVariants({ variant: "outline" })}>
+						Back to workspace
+					</Link>
+					<Link to="/digest" className={buttonVariants({ variant: "ghost" })}>
+						Digest
+					</Link>
 				</div>
 			</header>
 
@@ -172,10 +99,10 @@ function CollectionsRoute() {
 					<Button
 						variant="outline"
 						size="sm"
-						onClick={() => void loadCollections()}
-						disabled={isLoading}
+						onClick={() => void refetch()}
+						disabled={isFetching}
 					>
-						{isLoading ? "Refreshing..." : "Refresh"}
+						{isFetching ? "Refreshing..." : "Refresh"}
 					</Button>
 				</div>
 

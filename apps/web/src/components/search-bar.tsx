@@ -1,13 +1,8 @@
-import { useCallback, useEffect, useState, type ChangeEvent, type KeyboardEvent } from "react";
-import { env } from "@gneissdotrun/env/web";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { Button, Input } from "@cloudflare/kumo";
 
-interface QueryResult {
-	answer: string;
-	citations: Array<{ id: string; title: string }>;
-	relatedCollections: Array<{ id: string; title: string; summary: string }>;
-	followUps: string[];
-}
+import { searchQueryOptions } from "@/lib/queries/search";
 
 interface SearchBarProps {
 	query: string;
@@ -16,52 +11,18 @@ interface SearchBarProps {
 
 export function SearchBar({ query, onQueryCommit }: SearchBarProps) {
 	const [draftQuery, setDraftQuery] = useState(query);
-	const [result, setResult] = useState<QueryResult | null>(null);
-	const [isLoading, setIsLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	const runSearch = useCallback(async (question: string) => {
-		setIsLoading(true);
-		setError(null);
-
-		try {
-			const response = await fetch(`${env.VITE_SERVER_URL}/api/surfacing/query`, {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-				},
-				credentials: "include",
-				body: JSON.stringify({ question }),
-			});
-
-			if (!response.ok) {
-				const payload = (await response.json()) as { error?: string };
-				throw new Error(payload.error ?? "Search failed");
-			}
-
-			setResult((await response.json()) as QueryResult);
-		} catch (searchError) {
-			setError(searchError instanceof Error ? searchError.message : "Search failed");
-		} finally {
-			setIsLoading(false);
-		}
-	}, []);
 
 	const activeQuery = query.trim();
+	const resultQuery = useQuery({
+		...searchQueryOptions(activeQuery),
+		enabled: activeQuery.length > 0,
+	});
+	const result = activeQuery.length > 0 ? (resultQuery.data ?? null) : null;
+	const error = resultQuery.error instanceof Error ? resultQuery.error.message : null;
 
 	useEffect(() => {
 		setDraftQuery(query);
 	}, [query]);
-
-	useEffect(() => {
-		if (activeQuery.length === 0) {
-			setResult(null);
-			setError(null);
-			return;
-		}
-
-		void runSearch(activeQuery);
-	}, [activeQuery, runSearch]);
 
 	const commitQuery = (nextQuery: string) => {
 		const trimmed = nextQuery.trim();
@@ -71,7 +32,7 @@ export function SearchBar({ query, onQueryCommit }: SearchBarProps) {
 		}
 
 		if (trimmed === activeQuery) {
-			void runSearch(trimmed);
+			void resultQuery.refetch();
 			return;
 		}
 
@@ -109,8 +70,8 @@ export function SearchBar({ query, onQueryCommit }: SearchBarProps) {
 					}}
 					placeholder="Ask about projects, topics, or open questions"
 				/>
-				<Button onClick={submit} disabled={isLoading || draftQuery.trim().length === 0}>
-					{isLoading ? "Searching..." : "Search"}
+				<Button onClick={submit} disabled={resultQuery.isFetching || draftQuery.trim().length === 0}>
+					{resultQuery.isFetching ? "Searching..." : "Search"}
 				</Button>
 			</div>
 

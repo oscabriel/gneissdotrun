@@ -9,36 +9,16 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as ProfileRouteImport } from './routes/profile'
-import { Route as HistoryRouteImport } from './routes/history'
-import { Route as DigestRouteImport } from './routes/digest'
-import { Route as ContradictionsRouteImport } from './routes/contradictions'
-import { Route as CollectionsRouteImport } from './routes/collections'
+import { Route as ProtectedRouteImport } from './routes/_protected'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ProtectedProfileRouteImport } from './routes/_protected/profile'
+import { Route as ProtectedHistoryRouteImport } from './routes/_protected/history'
+import { Route as ProtectedDigestRouteImport } from './routes/_protected/digest'
+import { Route as ProtectedContradictionsRouteImport } from './routes/_protected/contradictions'
+import { Route as ProtectedCollectionsRouteImport } from './routes/_protected/collections'
 
-const ProfileRoute = ProfileRouteImport.update({
-  id: '/profile',
-  path: '/profile',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HistoryRoute = HistoryRouteImport.update({
-  id: '/history',
-  path: '/history',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DigestRoute = DigestRouteImport.update({
-  id: '/digest',
-  path: '/digest',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ContradictionsRoute = ContradictionsRouteImport.update({
-  id: '/contradictions',
-  path: '/contradictions',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CollectionsRoute = CollectionsRouteImport.update({
-  id: '/collections',
-  path: '/collections',
+const ProtectedRoute = ProtectedRouteImport.update({
+  id: '/_protected',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -46,31 +26,57 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProtectedProfileRoute = ProtectedProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => ProtectedRoute,
+} as any)
+const ProtectedHistoryRoute = ProtectedHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => ProtectedRoute,
+} as any)
+const ProtectedDigestRoute = ProtectedDigestRouteImport.update({
+  id: '/digest',
+  path: '/digest',
+  getParentRoute: () => ProtectedRoute,
+} as any)
+const ProtectedContradictionsRoute = ProtectedContradictionsRouteImport.update({
+  id: '/contradictions',
+  path: '/contradictions',
+  getParentRoute: () => ProtectedRoute,
+} as any)
+const ProtectedCollectionsRoute = ProtectedCollectionsRouteImport.update({
+  id: '/collections',
+  path: '/collections',
+  getParentRoute: () => ProtectedRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/collections': typeof CollectionsRoute
-  '/contradictions': typeof ContradictionsRoute
-  '/digest': typeof DigestRoute
-  '/history': typeof HistoryRoute
-  '/profile': typeof ProfileRoute
+  '/collections': typeof ProtectedCollectionsRoute
+  '/contradictions': typeof ProtectedContradictionsRoute
+  '/digest': typeof ProtectedDigestRoute
+  '/history': typeof ProtectedHistoryRoute
+  '/profile': typeof ProtectedProfileRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/collections': typeof CollectionsRoute
-  '/contradictions': typeof ContradictionsRoute
-  '/digest': typeof DigestRoute
-  '/history': typeof HistoryRoute
-  '/profile': typeof ProfileRoute
+  '/collections': typeof ProtectedCollectionsRoute
+  '/contradictions': typeof ProtectedContradictionsRoute
+  '/digest': typeof ProtectedDigestRoute
+  '/history': typeof ProtectedHistoryRoute
+  '/profile': typeof ProtectedProfileRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/collections': typeof CollectionsRoute
-  '/contradictions': typeof ContradictionsRoute
-  '/digest': typeof DigestRoute
-  '/history': typeof HistoryRoute
-  '/profile': typeof ProfileRoute
+  '/_protected': typeof ProtectedRouteWithChildren
+  '/_protected/collections': typeof ProtectedCollectionsRoute
+  '/_protected/contradictions': typeof ProtectedContradictionsRoute
+  '/_protected/digest': typeof ProtectedDigestRoute
+  '/_protected/history': typeof ProtectedHistoryRoute
+  '/_protected/profile': typeof ProtectedProfileRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -92,57 +98,26 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/collections'
-    | '/contradictions'
-    | '/digest'
-    | '/history'
-    | '/profile'
+    | '/_protected'
+    | '/_protected/collections'
+    | '/_protected/contradictions'
+    | '/_protected/digest'
+    | '/_protected/history'
+    | '/_protected/profile'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CollectionsRoute: typeof CollectionsRoute
-  ContradictionsRoute: typeof ContradictionsRoute
-  DigestRoute: typeof DigestRoute
-  HistoryRoute: typeof HistoryRoute
-  ProfileRoute: typeof ProfileRoute
+  ProtectedRoute: typeof ProtectedRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/profile': {
-      id: '/profile'
-      path: '/profile'
-      fullPath: '/profile'
-      preLoaderRoute: typeof ProfileRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/history': {
-      id: '/history'
-      path: '/history'
-      fullPath: '/history'
-      preLoaderRoute: typeof HistoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/digest': {
-      id: '/digest'
-      path: '/digest'
-      fullPath: '/digest'
-      preLoaderRoute: typeof DigestRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/contradictions': {
-      id: '/contradictions'
-      path: '/contradictions'
-      fullPath: '/contradictions'
-      preLoaderRoute: typeof ContradictionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/collections': {
-      id: '/collections'
-      path: '/collections'
-      fullPath: '/collections'
-      preLoaderRoute: typeof CollectionsRouteImport
+    '/_protected': {
+      id: '/_protected'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof ProtectedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -152,16 +127,67 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_protected/profile': {
+      id: '/_protected/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProtectedProfileRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
+    '/_protected/history': {
+      id: '/_protected/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof ProtectedHistoryRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
+    '/_protected/digest': {
+      id: '/_protected/digest'
+      path: '/digest'
+      fullPath: '/digest'
+      preLoaderRoute: typeof ProtectedDigestRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
+    '/_protected/contradictions': {
+      id: '/_protected/contradictions'
+      path: '/contradictions'
+      fullPath: '/contradictions'
+      preLoaderRoute: typeof ProtectedContradictionsRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
+    '/_protected/collections': {
+      id: '/_protected/collections'
+      path: '/collections'
+      fullPath: '/collections'
+      preLoaderRoute: typeof ProtectedCollectionsRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
   }
 }
 
+interface ProtectedRouteChildren {
+  ProtectedCollectionsRoute: typeof ProtectedCollectionsRoute
+  ProtectedContradictionsRoute: typeof ProtectedContradictionsRoute
+  ProtectedDigestRoute: typeof ProtectedDigestRoute
+  ProtectedHistoryRoute: typeof ProtectedHistoryRoute
+  ProtectedProfileRoute: typeof ProtectedProfileRoute
+}
+
+const ProtectedRouteChildren: ProtectedRouteChildren = {
+  ProtectedCollectionsRoute: ProtectedCollectionsRoute,
+  ProtectedContradictionsRoute: ProtectedContradictionsRoute,
+  ProtectedDigestRoute: ProtectedDigestRoute,
+  ProtectedHistoryRoute: ProtectedHistoryRoute,
+  ProtectedProfileRoute: ProtectedProfileRoute,
+}
+
+const ProtectedRouteWithChildren = ProtectedRoute._addFileChildren(
+  ProtectedRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CollectionsRoute: CollectionsRoute,
-  ContradictionsRoute: ContradictionsRoute,
-  DigestRoute: DigestRoute,
-  HistoryRoute: HistoryRoute,
-  ProfileRoute: ProfileRoute,
+  ProtectedRoute: ProtectedRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

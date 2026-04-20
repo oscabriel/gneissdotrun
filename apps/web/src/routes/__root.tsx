@@ -1,7 +1,10 @@
+import type { ReactNode } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 
 import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
 
+import { NotFound } from "@/components/router/not-found";
+import { TanStackDevtools } from "@/components/router/tanstack-devtools";
 import type { orpc } from "@/utils/orpc";
 import appCss from "../index.css?url";
 
@@ -65,11 +68,20 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 			},
 		],
 	}),
-
-	component: RootDocument,
+	notFoundComponent: NotFound,
+	component: RootComponent,
 });
 
-function RootDocument() {
+function RootComponent() {
+	return (
+		<RootDocument>
+			<Outlet />
+			<TanStackDevtools />
+		</RootDocument>
+	);
+}
+
+function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
 	return (
 		<html lang="en" suppressHydrationWarning>
 			<head>
@@ -77,7 +89,7 @@ function RootDocument() {
 				<HeadContent />
 			</head>
 			<body>
-				<Outlet />
+				{children}
 				<Scripts />
 			</body>
 		</html>

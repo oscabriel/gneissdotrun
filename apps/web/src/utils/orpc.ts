@@ -8,18 +8,20 @@ import { createTanstackQueryUtils } from "@orpc/tanstack-query";
 import { QueryCache, QueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 
-export const queryClient = new QueryClient({
-	queryCache: new QueryCache({
-		onError: (error, query) => {
-			toast.error(`Error: ${error.message}`, {
-				action: {
-					label: "retry",
-					onClick: query.invalidate,
-				},
-			});
-		},
-	}),
-});
+export function createQueryClient() {
+	return new QueryClient({
+		queryCache: new QueryCache({
+			onError: (error, query) => {
+				toast.error(`Error: ${error.message}`, {
+					action: {
+						label: "retry",
+						onClick: query.invalidate,
+					},
+				});
+			},
+		}),
+	});
+}
 
 const link = new RPCLink({
 	url: `${env.VITE_SERVER_URL}/rpc`,

@@ -1,34 +1,34 @@
-import { Button } from "@cloudflare/kumo";
-import { createFileRoute } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { Button, buttonVariants } from "@cloudflare/kumo";
+import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 
 import { authClient } from "@/lib/auth-client";
+import { ensureSessionQueryData, invalidateSessionQuery } from "@/lib/queries/session";
 
-export const Route = createFileRoute("/profile")({
+export const Route = createFileRoute("/_protected/profile")({
+	loader: async ({ context }) => {
+		const session = await ensureSessionQueryData(context.queryClient);
+
+		if (!session) {
+			throw redirect({
+				to: "/",
+			});
+		}
+
+		return session;
+	},
 	component: ProfileRoute,
 });
 
 function ProfileRoute() {
-	const { data: session, isPending } = authClient.useSession();
-	const navigate = Route.useNavigate();
+	const session = Route.useLoaderData();
+	const queryClient = useQueryClient();
+	const router = useRouter();
 
-	if (isPending) {
-		return (
-			<div className="mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center px-4">
-				<p className="text-muted-foreground text-sm">Loading session...</p>
-			</div>
-		);
-	}
-
-	if (!session) {
-		return (
-			<div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col justify-center gap-3 px-4">
-				<p className="text-muted-foreground text-sm">Sign in to view your profile.</p>
-				<a href="/" className="underline">
-					Back to home
-				</a>
-			</div>
-		);
-	}
+	const refreshAuthState = async () => {
+		await invalidateSessionQuery(queryClient);
+		await router.invalidate({ sync: true });
+	};
 
 	return (
 		<div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-4 px-4 py-6">
@@ -42,9 +42,9 @@ function ProfileRoute() {
 						Review your account details and sign out of the workspace.
 					</p>
 				</div>
-				<a href="/">
-					<Button variant="outline">Back to workspace</Button>
-				</a>
+				<Link to="/" className={buttonVariants({ variant: "outline" })}>
+					Back to workspace
+				</Link>
 			</header>
 
 			<section className="border-border bg-card space-y-4 border p-4">
@@ -78,7 +78,7 @@ function ProfileRoute() {
 						authClient.signOut({
 							fetchOptions: {
 								onSuccess: () => {
-									void navigate({ to: "/" });
+									void refreshAuthState();
 								},
 							},
 						});

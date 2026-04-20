@@ -1,13 +1,14 @@
-import { QueryClientProvider } from "@tanstack/react-query";
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
+import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query";
 import { Toasty, useKumoToastManager } from "@cloudflare/kumo";
 import { useEffect } from "react";
 
 import "./index.css";
+import { DefaultCatchBoundary } from "./components/router/default-catch-boundary";
 import Loader from "./components/loader";
 import { bindToastManager } from "./lib/toast";
 import { routeTree } from "./routeTree.gen";
-import { orpc, queryClient } from "./utils/orpc";
+import { createQueryClient, orpc } from "./utils/orpc";
 
 function ToastManagerBridge() {
 	const manager = useKumoToastManager();
@@ -23,22 +24,28 @@ function ToastManagerBridge() {
 }
 
 export const getRouter = () => {
+	const queryClient = createQueryClient();
 	const router = createTanStackRouter({
 		routeTree,
 		scrollRestoration: true,
+		defaultPreload: "intent",
 		defaultPreloadStaleTime: 0,
 		context: { orpc, queryClient },
-		defaultPendingComponent: () => <Loader />,
-		defaultNotFoundComponent: () => <div>Not Found</div>,
+		defaultPendingComponent: Loader,
+		defaultErrorComponent: DefaultCatchBoundary,
 		Wrap: ({ children }) => (
-			<QueryClientProvider client={queryClient}>
-				<Toasty>
-					<ToastManagerBridge />
-					{children}
-				</Toasty>
-			</QueryClientProvider>
+			<Toasty>
+				<ToastManagerBridge />
+				{children}
+			</Toasty>
 		),
 	});
+
+	setupRouterSsrQueryIntegration({
+		router,
+		queryClient,
+	});
+
 	return router;
 };
 
